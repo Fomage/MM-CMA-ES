@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>MM-CMAES</title>
+    <link rel="stylesheet" href="mm-cmaes.css">
+    <script src="bower_components/numericjs/src/numeric.js"></script>
+    <script src="mm-cmaes.js"></script>
+    <script src="mm-cmaes-intf.js"></script>
+  </head>
+  <body>
+    <form id="form">
+      <div id="header">
+        <div>
+          <input id="formula" value="x*x+y*y">
+          <input id="drawButton" type="submit" value="Draw">
+        </div>
+        <div id="terminationMessage">
+          Not terminated yet.
+        </div>
+      </div>
+      <div id="canvasBox">
+        <canvas id="canvas" width="600" height="600"></canvas>
+      </div>
+      <div id="footer">
+        <input id="slider" type="range">
+      </div>
+    </form>
+  </body>
+</html>

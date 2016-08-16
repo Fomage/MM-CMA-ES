@@ -1,0 +1,25 @@
+# depslib dependency file v1.0
+1471006949 source:c:\users\fomage\desktop\nicolas\ecole\inria\implementations\mmcmaes\c-cmaes-master\src\cmaes.c
+	<math.h>
+	<stddef.h>
+	<stdlib.h>
+	<string.h>
+	<stdio.h>
+	<stdint.h>
+	<float.h>
+	"cmaes_interface.h"
+
+1438018341 c:\users\fomage\desktop\nicolas\ecole\inria\implementations\mmcmaes\c-cmaes-master\src\cmaes_interface.h
+	"cmaes.h"
+
+1471009275 c:\users\fomage\desktop\nicolas\ecole\inria\implementations\mmcmaes\c-cmaes-master\src\cmaes.h
+	<time.h>
+
+1470927270 source:c:\users\fomage\desktop\nicolas\ecole\inria\implementations\mmcmaes\c-cmaes-master\src\example_restarts.c
+	<stdio.h>
+	<string.h>
+	<math.h>
+	<stdlib.h>
+	<stddef.h>
+	"cmaes_interface.h"
+
