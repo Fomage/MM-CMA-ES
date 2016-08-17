@@ -236,8 +236,158 @@ static void assign_string( char **, const char*);
 static void cmaes_init_grid(cmaes_t* t);
 static int* kmeans(double **data, int n, int N, int k, double t, int* initialCentroids,
                    double* weights, double **centroids);
+static void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* target);
+static void cmaes_timings_clone(cmaes_timings_t* source, cmaes_timings_t* target);
+static void cmaes_random_clone(cmaes_random_t* source, cmaes_random_t* target);
+static void cmaes_clone(cmaes_t* source, cmaes_t* target);
+static void mm_cmaes_free_village(mm_cmaes_t* t, int i);
+static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t);
 
-static const char * c_cmaes_version = "3.20.00.beta";
+static const char * c_cmaes_version = "3.20.01";
+
+/* --------------------------------------------------------- */
+/* --------------- Functions: mm_cmaes_t ------------------- */
+/* --------------------------------------------------------- */
+
+void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
+        int dimension , double *xstart,
+		double *stddev, long seed, int lambda,
+		const char *input_parameter_filename)
+{
+  int i, nb=max_villages;
+  FILE *fp = NULL;
+
+  fp = fopen(input_parameter_filename, "r");
+  if (fp) {
+    fscanf(fp, "function number %d", &nb);
+    printf("max_villages = %d\n",nb);
+    fclose(fp);
+    if (nb < 0)
+      nb = max_villages;
+  } else {
+    printf("mm_cmaes_init(): could not open %s to read villages number", input_parameter_filename);
+    nb = max_villages;
+  }
+
+  if(nb<=0)
+    t->max_villages = 1;
+  else
+    t->max_villages = nb;
+  t->nb_villages = 0;
+  t->villages = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
+  t->pop = (double*const**) new_void(t->max_villages,sizeof(double const*));
+
+  t->countevals=0;
+  t->fbestever=0;
+  t->xbestever=NULL;
+
+  t->villages[0] = (cmaes_t*) malloc(sizeof(cmaes_t));
+  cmaes_init(t->villages[0],
+                dimension,xstart,
+                stddev,seed,lambda,
+                input_parameter_filename);
+  for(i=1;i<t->max_villages;i++)
+    t->villages[i]=NULL;
+
+  //init t->xbestever
+}
+
+double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
+{
+  double fmean;
+  int i, ivillage;
+  cmaes_t *evo=NULL; /* for convenience */
+  char const * stop; /* stop message */
+  short stahp=0;
+
+  while(!stahp){
+    stahp=1;
+    for(ivillage = 0 ; ivillage<t->max_villages ; ivillage++){
+      evo = t->villages[ivillage];
+      if(evo){
+        //printf("Updating village %d\n",ivillage);
+        stahp=0;
+        t->pop[ivillage] = cmaes_SamplePopulation(evo);
+        for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
+          evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
+        /* update search distribution */
+        cmaes_UpdateDistribution(evo, evo->publicFitness);
+
+        /* read control signals for output and termination */
+        cmaes_ReadSignals(evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
+        fflush(stdout);
+
+        if((stop = cmaes_TestForTermination(evo))){
+          t->countevals+=evo->countevals;
+
+          /* print something */
+          printf("Village %d has terminated.\n",ivillage);
+		  printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
+				cmaes_Get(evo, "gen"), cmaes_Get(evo, "eval"),
+				evo->eigenTimings.totaltime,
+				cmaes_Get(evo, "funval"));
+		  printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
+				cmaes_Get(evo, "maxaxislen") / cmaes_Get(evo, "minaxislen"),
+				cmaes_Get(evo, "maxstddev"), cmaes_Get(evo, "minstddev"));
+		  printf("Stop :\n%s\n", cmaes_TestForTermination(evo));
+
+		  /* write some data */
+		  cmaes_WriteToFile(evo, "all", "allcmaes.dat");
+
+		  /* keep best ever solution */
+		  if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
+			t->fbestever = cmaes_Get(evo, "fbestever");
+			t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
+		  }
+		  /* best estimator for the optimum is xmean, therefore check */
+		  if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
+			t->fbestever = fmean;
+			t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
+		  }
+
+		  mm_cmaes_free_village(t,ivillage);
+
+		  if (strncmp(stop, "Manual", 6) == 0) {
+            printf("Manual stop\n"); fflush(stdout);
+            stahp=1;
+            break;
+		  }
+        }/* if(testForTermination) */
+      }/* if(evo) */
+    }/* for(ivillage) */
+  }/* while(goon) */
+  return t->xbestever;
+}
+
+static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t)
+{
+  int i;
+  for(i=0;i<t->max_villages;i++){
+    if(t->villages[i]==NULL)
+      break;
+  }
+  if(i<t->max_villages)
+    return i;
+  else
+    return -1;
+}
+
+void mm_cmaes_free_village(mm_cmaes_t* t, int i){
+  if(t->villages[i]){
+    cmaes_exit(t->villages[i]);
+    free(t->villages[i]);
+    free((double**)t->pop[i]);
+    t->villages[i]=NULL;
+  }
+}
+
+void mm_cmaes_exit(mm_cmaes_t* t)
+{
+  int i;
+  for(i=0;i<t->max_villages;i++)
+    mm_cmaes_free_village(t,i);
+  free( t->xbestever);
+}
 
 /* --------------------------------------------------------- */
 /* ---------------- Functions: cmaes_t --------------------- */
@@ -412,7 +562,6 @@ cmaes_init_final(cmaes_t *t /* "this" */)
 
 } /* cmaes_init_final() */
 
-
 /* --------------------------------------------------------- */
 /* --------------------------------------------------------- */
 double *
@@ -427,6 +576,189 @@ cmaes_init(cmaes_t *t, /* "this" */
   cmaes_init_para(t, dimension, inxstart, inrgstddev, inseed,
                    lambda, input_parameter_filename);
   return cmaes_init_final(t);
+}
+
+/* --------------------------------------------------------- */
+/* --------------------------------------------------------- */
+
+void cmaes_clone(cmaes_t* source, cmaes_t* t)
+{
+  t->version=c_cmaes_version;
+  /* char *signalsFilename; */
+  //cmaes_readpara_clone(&source->sp,&t->sp);
+  t->sp=source->sp;
+  cmaes_random_clone(&source->rand,&t->rand); /* random number generator */
+
+  int i, j, N;
+
+  /*if (!t->sp.flgsupplemented) {
+    cmaes_readpara_SupplementDefaults(&t->sp);
+    if (!isNoneStr(t->sp.filename))
+      cmaes_readpara_WriteToFile(&t->sp, "actparcmaes.par");
+  }*/
+
+  t->sp.seed = source->sp.seed;
+
+  N = source->sp.N; /* for convenience */
+  t->sp.N = N;
+
+  /* initialization  */
+  t->sigma = source->sigma; /* t->sp.mueff/(0.2*t->sp.mueff+sqrt(N)) * sqrt(trace/N); */
+
+  t->chiN = source->chiN;
+  t->flgEigensysIsUptodate = source->flgEigensysIsUptodate;
+  t->flgCheckEigen = source->flgCheckEigen;
+  t->genOfEigensysUpdate = source->genOfEigensysUpdate;
+  cmaes_timings_clone(&source->eigenTimings, &t->eigenTimings);
+  t->flgIniphase = source->flgIniphase; /* do not use iniphase, hsig does the job now */
+  t->flgresumedone = source->flgresumedone;
+  t->flgStop = source->flgStop;
+
+  t->dMaxSignifKond = source->dMaxSignifKond; /* not sure whether this is really save, 100 does not work well enough */
+
+  t->gen = source->gen;
+  t->countevals = source->countevals;
+  t->state = source->state;
+  t->dLastMinEWgroesserNull = source->dLastMinEWgroesserNull;
+  t->printtime = source->printtime;
+  t->writetime = source->writetime;
+  t->firstwritetime = source->firstwritetime;
+  t->firstprinttime = source->firstprinttime;
+
+  t->rgpc = new_double(N);for(i=-1;++i<N;t->rgpc[i]=source->rgpc[i]);
+  t->rgps = new_double(N);for(i=-1;++i<N;t->rgps[i]=source->rgps[i]);
+  t->rgdTmp = new_double(N+1);for(i=-1;++i<N+1;t->rgdTmp[i]=source->rgdTmp[i]);
+  t->rgBDz = new_double(N);for(i=-1;++i<N;t->rgBDz[i]=source->rgBDz[i]);
+  t->rgxmean = new_double(N+2);for(i=-1;++i<N+2;t->rgxmean[i]=source->rgxmean[i]);++t->rgxmean;
+  t->rgxold = new_double(N+2);for(i=-1;++i<N+2;t->rgxold[i]=source->rgxold[i]);++t->rgxold;
+  t->rgxbestever = new_double(N+3);for(i=-1;++i<N+3;t->rgxbestever[i]=source->rgxbestever[i]);++t->rgxbestever;
+  t->rgout = new_double(N+2);for(i=-1;++i<N+2;t->rgout[i]=source->rgout[i]); ++t->rgout;
+  t->rgD = new_double(N);for(i=-1;++i<N;t->rgD[i]=source->rgD[i]);
+  t->C = (double**)new_void(N, sizeof(double*));
+  t->B = (double**)new_void(N, sizeof(double*));
+  t->publicFitness = new_double(t->sp.lambda);for(i=-1;++i<t->sp.lambda;t->publicFitness[i]=source->publicFitness[i]);
+  t->rgFuncValue = new_double(t->sp.lambda+1);for(i=-1;++i<N;t->rgD[i]=source->rgD[i]);++t->rgFuncValue;
+  t->arFuncValueHist = new_double(10+(int)ceil(3.*10.*N/t->sp.lambda)+1);
+    for(i=-1;++i<10+(int)ceil(3.*10.*N/t->sp.lambda)+1;t->arFuncValueHist[i]=source->arFuncValueHist[i]);
+    t->arFuncValueHist++;
+
+  for (i = 0; i < N; ++i) {
+      t->C[i] = new_double(i+1);for(j=-1;++j<i+1;t->C[i][j]=source->C[i][j]);
+      t->B[i] = new_double(N);for(j=-1;++j<N;t->B[i][j]=source->B[i][j]);
+    }
+  t->index = (int *) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->C[i][j]=source->C[i][j]);
+  t->rgrgx = (double **)new_void(t->sp.lambda, sizeof(double*));
+  for (i = 0; i < t->sp.lambda; ++i) {
+    t->rgrgx[i] = new_double(N+2);
+    for(j=-1;++j<N+2;t->rgrgx[i][j]=source->rgrgx[i][j]);
+    t->rgrgx[i]++;
+  }
+  t->causeDivision = (int*) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->causeDivision[j]=source->causeDivision[j]);
+  t->clusters = (int*) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->clusters[j]=source->clusters[j]);
+
+  /* Initialize newed space  */
+
+  t->minEW = source->minEW;
+  t->maxEW = source->maxEW;
+
+  t->maxdiagC=source->maxdiagC;
+  t->mindiagC=source->mindiagC;
+
+  /* initialize the grid */
+  t->grid=NULL;
+  if(t->sp.flgNoRandom){
+    cmaes_init_grid(t);
+  }
+}
+
+void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
+{
+  int j, N;
+  t->filename = source->filename;
+
+  /* All scalars:  */
+  t->N = source->N;N=t->N;
+  t->seed = source->seed;
+  t->stopMaxFunEvals = source->stopMaxFunEvals;
+  t->stopMaxIter = source->stopMaxIter;
+  t->stStopFitness.val = source->stStopFitness.val;
+  t->stopTolFun = source->stopTolFun;
+  t->stopTolFunHist = source->stopTolFunHist;
+  t->stopTolX = source->stopTolX;
+  t->stopTolUpXFactor = source->stopTolUpXFactor;
+  t->flgNoRandom = source->flgNoRandom;
+  t->lambda = source->lambda;
+  t->mu = source->mu;
+  strcpy(t->weigkey, source->weigkey);
+  t->cs = source->cs;
+  t->damps = source->damps;
+  t->ccumcov = source->ccumcov;
+  t->mucov = source->mucov;
+  t->ccov = source->ccov;
+  t->diagonalCov = source->diagonalCov;
+  t->updateCmode.modulo = source->updateCmode.modulo;
+  t->updateCmode.maxtime = source->updateCmode.maxtime;
+  strcpy(t->resumefile, source->resumefile);
+  t->facmaxeval = source->facmaxeval;
+  t->facupdateCmode = source->facupdateCmode;
+
+  /* arrays */
+
+  t->xstart = NULL;
+  t->typicalX = NULL;
+  t->typicalXcase = source->typicalXcase;
+  t->rgInitialStds = NULL;
+  t->rgDiffMinChange = NULL;
+  t->stopMaxFunEvals = source->stopMaxFunEvals;
+  t->stopMaxIter = source->stopMaxIter;
+  t->facmaxeval = source->stopMaxIter;
+  t->stStopFitness.flg = source->stStopFitness.flg;
+  t->stopTolFun = source->stopTolFun;
+  t->stopTolFunHist = source->stopTolFunHist;
+  t->stopTolX = source->stopTolX;
+  t->stopTolUpXFactor = source->stopTolUpXFactor;
+  t->flgNoRandom = source->flgNoRandom;
+  t->weights = NULL;
+
+  t->updateCmode.flgalways = source->updateCmode.flgalways;
+  t->facupdateCmode = source->facupdateCmode;
+  strcpy(t->resumefile, "_no_");
+
+  t->xstart = new_double(N);
+  for(j=-1;++j<N;t->xstart[j]=source->xstart[j]);
+
+  t->rgInitialStds = new_double(N);
+  for(j=-1;++j<N;t->rgInitialStds[j]=source->rgInitialStds[j]);
+}
+
+void cmaes_random_clone(cmaes_random_t *source, cmaes_random_t *t)
+{
+  int i;
+  t->startseed = source->startseed;
+  t->aktseed = source->aktseed;
+  t->aktrand = source->aktrand;
+  t->rgrand = (long *) new_void(32, sizeof(long));for(i=-1;++i<32;t->rgrand[i]=source->rgrand[i]);
+
+  t->flgstored = source->flgstored;
+  t->hold = source->hold;
+}
+
+void cmaes_timings_clone(cmaes_timings_t* source, cmaes_timings_t* t)
+{
+  t->totaltime = source->totaltime;
+  t->totaltotaltime = source->totaltotaltime;
+  t->tictoctime = source->tictoctime;
+  t->lasttictoctime = source->lasttictoctime;
+
+  t->lastclock = source->lastclock;
+  t->lasttime = source->lasttime;
+  t->ticclock = source->ticclock;
+  t->tictime = source->tictime;
+  t->istic = source->istic;
+  t->isstarted = source->isstarted;
+
+  t->lastdiff = source->lastdiff;
+  t->tictoczwischensumme = source->tictoczwischensumme;
 }
 
 /* --------------------------------------------------------- */
@@ -3300,7 +3632,7 @@ int* kmeans(double **data, int n, int N, int k, double t, int* initialCentroids,
   }
   /* pick k points as initial centroids */
   for(h=0;h<k;h++)
-    for (j = N; j-- > 0; c[i][j] = data[initialCentroids[h]][j]);
+    for (j = N; j-- > 0; c[h][j] = data[initialCentroids[h]][j]);
 
    /****
    ** main loop */

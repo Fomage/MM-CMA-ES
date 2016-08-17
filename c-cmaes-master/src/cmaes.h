@@ -181,4 +181,18 @@ typedef struct
 } cmaes_t;
 
 
+typedef struct
+/* the MM-CMA-ES object, managing the different cmaes instances */
+{
+  int max_villages;
+  int nb_villages;
+
+  cmaes_t** villages;
+  double*const** pop;
+
+  int countevals;
+  double fbestever;
+  double* xbestever;
+} mm_cmaes_t;
+
 #endif

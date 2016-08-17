@@ -50,8 +50,7 @@ int main(int argn, char **args)
 	pfun_t rgpFun[99];  /* array (range) of pointer to objective function */
 	char *filename = "cmaes_initials.par"; /* input parameter file */
 	FILE *fp = NULL;
-	int nb = 0, nbrestarts = 0;
-	double incpopsize = 2;
+	int nb = 0;
 	int maxnb, ret=1;
 	char c;
 	double *x;
@@ -82,26 +81,28 @@ int main(int argn, char **args)
 	fp = fopen(filename, "r");
 	if (fp) {
 		fscanf(fp, " function number %d ", &nb);
+		printf("Function number %d optimised.\n",nb);
 		/* go to next line, a bit sloppy */
 		for (c = ' ', ret = 1; c != '\n' && c != '\0' && c != EOF && ret && ret != EOF;
 				ret=fscanf(fp, "%c", &c))
 			;
-		fscanf(fp, " restarts %d %lf", &nbrestarts, &incpopsize);
-		printf("nbrestarts = %d\n",nbrestarts);
+		/*fscanf(fp, " restarts %d %lf", &nbrestarts, &incpopsize);
+		printf("nbrestarts = %d\n",nbrestarts);*/
 		fclose(fp);
 		if (nb < 0 || nb > maxnb)
 			nb = 0;
-		if (nbrestarts < 0)
-			nbrestarts = 0;
 	} else
 		printf("main(): could not open %s to read function number", filename);
 
+	mm_cmaes_t evo;
+    mm_cmaes_init(&evo, 1, 0, NULL, NULL, 0, 0, filename);
 	/* Optimize function */
 
-	x = optimize(rgpFun[nb], nbrestarts, incpopsize, filename);
+	x = mm_cmaes_run(&evo,rgpFun[nb]);
 
 	/* here we could utilize the solution x, and finally free memory */
 
+    mm_cmaes_exit(&evo);
 	free(x);
 
 	return 0;
