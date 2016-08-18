@@ -51,8 +51,7 @@ int main(int argn, char **args)
 	char *filename = "cmaes_initials.par"; /* input parameter file */
 	FILE *fp = NULL;
 	int nb = 0;
-	int maxnb, ret=1;
-	char c;
+	int maxnb;
 	double *x;
 
 	/* Put together objective functions */
@@ -77,14 +76,17 @@ int main(int argn, char **args)
 	rgpFun[24] = f_rastrigin;
 	maxnb = 24;
 
+	mm_cmaes_t evo;
+    mm_cmaes_init(&evo, 1, 0, NULL, NULL, 0, 0, filename);
+
 	/* Read objective function number and number of restarts from file */
 	fp = fopen(filename, "r");
 	if (fp) {
 		fscanf(fp, " function number %d ", &nb);
 		printf("Function number %d optimised.\n",nb);
 		/* go to next line, a bit sloppy */
-		for (c = ' ', ret = 1; c != '\n' && c != '\0' && c != EOF && ret && ret != EOF;
-				ret=fscanf(fp, "%c", &c))
+		/*for (c = ' ', ret = 1; c != '\n' && c != '\0' && c != EOF && ret && ret != EOF;
+				ret=fscanf(fp, "%c", &c))*/
 			;
 		/*fscanf(fp, " restarts %d %lf", &nbrestarts, &incpopsize);
 		printf("nbrestarts = %d\n",nbrestarts);*/
@@ -94,10 +96,8 @@ int main(int argn, char **args)
 	} else
 		printf("main(): could not open %s to read function number", filename);
 
-	mm_cmaes_t evo;
-    mm_cmaes_init(&evo, 1, 0, NULL, NULL, 0, 0, filename);
 	/* Optimize function */
-
+    printf("Begin optimization.\n");
 	x = mm_cmaes_run(&evo,rgpFun[nb]);
 
 	/* here we could utilize the solution x, and finally free memory */

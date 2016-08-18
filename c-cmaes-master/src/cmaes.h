@@ -111,7 +111,7 @@ typedef struct
   int n2para;
 } cmaes_readpara_t;
 
-typedef struct
+struct cmaes_type
 /* cmaes_t
  * CMA-ES "object"
  */
@@ -177,8 +177,11 @@ typedef struct
   time_t firstprinttime;
 
   short shouldSplit;
+  short canSplit;
 
-} cmaes_t;
+  struct cmaes_type* other;/* used in case of split */
+};
+typedef struct cmaes_type cmaes_t;
 
 
 typedef struct

@@ -210,7 +210,7 @@ static void Eigen( int N,  double **C, double *diag, double **Q,
 static int  Check_Eigen( int N,  double **C, double *diag, double **Q);
 static void QLalgo2 (int n, double *d, double *e, double **V);
 static void Householder2(int n, double **V, double *d, double *e);
-static void Adapt_C2(cmaes_t *t, int hsig);
+static void Adapt_C2(cmaes_t *t, int hsig, short noRankMuUpdate);
 
 static void FATAL(char const *sz1, char const *s2,
                   char const *s3, char const *s4);
@@ -242,6 +242,7 @@ static void cmaes_random_clone(cmaes_random_t* source, cmaes_random_t* target);
 static void cmaes_clone(cmaes_t* source, cmaes_t* target);
 static void mm_cmaes_free_village(mm_cmaes_t* t, int i);
 static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t);
+static void mm_cmaes_allowSplit(mm_cmaes_t *t, short b);
 
 static const char * c_cmaes_version = "3.20.01";
 
@@ -259,7 +260,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
 
   fp = fopen(input_parameter_filename, "r");
   if (fp) {
-    fscanf(fp, "function number %d", &nb);
+    fscanf(fp, "villages %d", &nb);
     printf("max_villages = %d\n",nb);
     fclose(fp);
     if (nb < 0)
@@ -273,7 +274,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     t->max_villages = 1;
   else
     t->max_villages = nb;
-  t->nb_villages = 0;
+  t->nb_villages = 1;
   t->villages = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
   t->pop = (double*const**) new_void(t->max_villages,sizeof(double const*));
 
@@ -294,14 +295,24 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
 
 double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 {
+  printf("mm_cmaes_run() called.\n");
+
   double fmean;
   int i, ivillage;
   cmaes_t *evo=NULL; /* for convenience */
   char const * stop; /* stop message */
-  short stahp=0;
+  short stahp=0,splitOccured=0;;
+  cmaes_t** buffer = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
+  for(i=0;i<t->max_villages;i++)
+    buffer[i]=NULL;
+  int buffercount;
+  if(t->max_villages<=1)
+    mm_cmaes_allowSplit(t,0);
 
   while(!stahp){
     stahp=1;
+    buffercount=0;
+    //printf("mm_cmaes_run() main loop : %d/%d villages.\n",t->nb_villages,t->max_villages);
     for(ivillage = 0 ; ivillage<t->max_villages ; ivillage++){
       evo = t->villages[ivillage];
       if(evo){
@@ -311,13 +322,29 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
         for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
           evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
         /* update search distribution */
+        //printf("\tUpdating distribution of village %d\n",ivillage);
         cmaes_UpdateDistribution(evo, evo->publicFitness);
+
+        /* handle split */
+        splitOccured=0;
+        if(evo->shouldSplit){
+          splitOccured=1;
+          printf("\tSplit detected in village %d\n",ivillage);
+          printf("\txstart adresses : %d, %d\n",evo->other->sp.xstart,evo->sp.xstart);
+          buffer[buffercount]=evo->other;
+          buffercount++;
+          if(buffercount >= t->max_villages - t->nb_villages){
+            mm_cmaes_allowSplit(t,0);
+            for(i=0;i<buffercount;i++)
+              buffer[i]->canSplit=0;
+          }
+        }
 
         /* read control signals for output and termination */
         cmaes_ReadSignals(evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
         fflush(stdout);
 
-        if((stop = cmaes_TestForTermination(evo))){
+        if((stop = cmaes_TestForTermination(evo)) && (!splitOccured)){/* termination conditions are invalid right after a split */
           t->countevals+=evo->countevals;
 
           /* print something */
@@ -346,6 +373,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 		  }
 
 		  mm_cmaes_free_village(t,ivillage);
+          mm_cmaes_allowSplit(t,1);
 
 		  if (strncmp(stop, "Manual", 6) == 0) {
             printf("Manual stop\n"); fflush(stdout);
@@ -355,8 +383,30 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
         }/* if(testForTermination) */
       }/* if(evo) */
     }/* for(ivillage) */
+
+    /* add the split villages */
+    for(i=0;i<buffercount;i++){
+      t->villages[mm_cmaes_findFreeVillageIndex(t)] = buffer[i];
+      t->nb_villages++;
+      buffer[i]=NULL;
+      printf("Added village.\n");
+    }
+    //printf("mm_cmaes_run() main loop end : %d/%d villages.\n",t->nb_villages,t->max_villages);
+
   }/* while(goon) */
+
+  free(buffer);
+
   return t->xbestever;
+}
+
+static void mm_cmaes_allowSplit(mm_cmaes_t *t, short b)
+{
+  int i;
+  for(i=0;i<t->max_villages;i++){
+    if(t->villages[i])
+      t->villages[i]->canSplit=b;
+  }
 }
 
 static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t)
@@ -376,8 +426,9 @@ void mm_cmaes_free_village(mm_cmaes_t* t, int i){
   if(t->villages[i]){
     cmaes_exit(t->villages[i]);
     free(t->villages[i]);
-    free((double**)t->pop[i]);
+    //free((double**)t->pop[i]);
     t->villages[i]=NULL;
+    t->nb_villages--;
   }
 }
 
@@ -502,7 +553,7 @@ cmaes_init_final(cmaes_t *t /* "this" */)
   t->rgFuncValue = new_double(t->sp.lambda+1);
   t->rgFuncValue[0]=t->sp.lambda; ++t->rgFuncValue;
   t->arFuncValueHist = new_double(10+(int)ceil(3.*10.*N/t->sp.lambda)+1);
-  t->arFuncValueHist[0] = (double)(10+(int)ceil(3.*10.*N/t->sp.lambda));
+  t->arFuncValueHist[0] = (int)(10+(int)ceil(3.*10.*N/t->sp.lambda));
   t->arFuncValueHist++;
 
   for (i = 0; i < N; ++i) {
@@ -520,6 +571,7 @@ cmaes_init_final(cmaes_t *t /* "this" */)
   }
   t->causeDivision = (int*) new_void(t->sp.lambda, sizeof(int));
   t->clusters = (int*) new_void(t->sp.lambda, sizeof(int));
+  t->canSplit=1;
 
   /* Initialize newed space  */
 
@@ -585,8 +637,9 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
 {
   t->version=c_cmaes_version;
   /* char *signalsFilename; */
-  //cmaes_readpara_clone(&source->sp,&t->sp);
-  t->sp=source->sp;
+  cmaes_readpara_clone(&source->sp,&t->sp);
+  printf("\t\tParameters cloning done.\n");
+  //t->sp=source->sp;
   cmaes_random_clone(&source->rand,&t->rand); /* random number generator */
 
   int i, j, N;
@@ -638,21 +691,30 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   t->B = (double**)new_void(N, sizeof(double*));
   t->publicFitness = new_double(t->sp.lambda);for(i=-1;++i<t->sp.lambda;t->publicFitness[i]=source->publicFitness[i]);
   t->rgFuncValue = new_double(t->sp.lambda+1);for(i=-1;++i<N;t->rgD[i]=source->rgD[i]);++t->rgFuncValue;
-  t->arFuncValueHist = new_double(10+(int)ceil(3.*10.*N/t->sp.lambda)+1);
-    for(i=-1;++i<10+(int)ceil(3.*10.*N/t->sp.lambda)+1;t->arFuncValueHist[i]=source->arFuncValueHist[i]);
+  t->arFuncValueHist = new_double((int)*(source->arFuncValueHist-1)+1);
     t->arFuncValueHist++;
+    *(t->arFuncValueHist-1) = (int)*(source->arFuncValueHist-1);
+    for(i=-1;++i<source->arFuncValueHist[-1];t->arFuncValueHist[i]=source->arFuncValueHist[i]);
+  //comparison
+  /*t->arFuncValueHist = new_double(10+(int)ceil(3.*10.*N/t->sp.lambda)+1);
+  t->arFuncValueHist[0] = (int)(10+(int)ceil(3.*10.*N/t->sp.lambda));
+  printf("Size of arFuncValueHist at init : %d (try 1)\n",t->arFuncValueHist[0]);
+  t->arFuncValueHist++;
+  printf("Size of arFuncValueHist at init : %d\n",(int)*(t->arFuncValueHist-1));*/
 
   for (i = 0; i < N; ++i) {
       t->C[i] = new_double(i+1);for(j=-1;++j<i+1;t->C[i][j]=source->C[i][j]);
       t->B[i] = new_double(N);for(j=-1;++j<N;t->B[i][j]=source->B[i][j]);
     }
-  t->index = (int *) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->C[i][j]=source->C[i][j]);
+  t->index = (int *) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->index[j]=source->index[j]);
   t->rgrgx = (double **)new_void(t->sp.lambda, sizeof(double*));
   for (i = 0; i < t->sp.lambda; ++i) {
     t->rgrgx[i] = new_double(N+2);
     for(j=-1;++j<N+2;t->rgrgx[i][j]=source->rgrgx[i][j]);
+    t->rgrgx[i][0] = N;
     t->rgrgx[i]++;
   }
+
   t->causeDivision = (int*) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->causeDivision[j]=source->causeDivision[j]);
   t->clusters = (int*) new_void(t->sp.lambda, sizeof(int));for(j=-1;++j<t->sp.lambda;t->clusters[j]=source->clusters[j]);
 
@@ -674,7 +736,14 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
 void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
 {
   int j, N;
-  t->filename = source->filename;
+  t->filename = (char*) new_void(strlen(source->filename),sizeof(char));
+  strcpy(t->filename, source->filename);
+
+  //for check only
+  t->rgsformat = NULL;
+  t->rgpadr = NULL;
+  t->rgskeyar = NULL;
+  t->rgp2adr = NULL;
 
   /* All scalars:  */
   t->N = source->N;N=t->N;
@@ -689,6 +758,7 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->flgNoRandom = source->flgNoRandom;
   t->lambda = source->lambda;
   t->mu = source->mu;
+  t->weigkey = (char *)new_void(strlen(source->weigkey), sizeof(char));
   strcpy(t->weigkey, source->weigkey);
   t->cs = source->cs;
   t->damps = source->damps;
@@ -698,13 +768,12 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->diagonalCov = source->diagonalCov;
   t->updateCmode.modulo = source->updateCmode.modulo;
   t->updateCmode.maxtime = source->updateCmode.maxtime;
-  strcpy(t->resumefile, source->resumefile);
   t->facmaxeval = source->facmaxeval;
   t->facupdateCmode = source->facupdateCmode;
 
   /* arrays */
 
-  t->xstart = NULL;
+  //t->xstart = NULL;
   t->typicalX = NULL;
   t->typicalXcase = source->typicalXcase;
   t->rgInitialStds = NULL;
@@ -726,6 +795,7 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
 
   t->xstart = new_double(N);
   for(j=-1;++j<N;t->xstart[j]=source->xstart[j]);
+  printf("xstart comparison : %d, %d\n",t->xstart,source->xstart);
 
   t->rgInitialStds = new_double(N);
   for(j=-1;++j<N;t->rgInitialStds[j]=source->rgInitialStds[j]);
@@ -1201,9 +1271,12 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
   }
 
   /* update function value history */
-  for(i = (int)*(t->arFuncValueHist-1)-1; i > 0; --i) /* for(i = t->arFuncValueHist[-1]-1; i > 0; --i) */
+  for(i = (int)*(t->arFuncValueHist-1)-1; i > 0; --i){ /* for(i = t->arFuncValueHist[-1]-1; i > 0; --i) */
+    //printf("\t\tarFuncValueHist index : %d\n",i);
     t->arFuncValueHist[i] = t->arFuncValueHist[i-1];
+  }
   t->arFuncValueHist[0] = rgFunVal[t->index[0]];
+  //printf("t->arFuncValueHist[0]=%f\n",t->arFuncValueHist[0]);
 
   /* update xbestever */
   if (t->rgxbestever[N] > t->rgrgx[t->index[0]][N] || t->gen == 1)
@@ -1214,6 +1287,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
 
   /* check whether a split is necessary or not */
   t->shouldSplit=0;
+
   double dd,d,Sd=.5;
   int mud = (int)douMax(2,ceil(t->sp.lambda/4.));
   dd=sqrt(t->maxEW)*t->sigma;
@@ -1221,74 +1295,153 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
   t->divisionThreshold=Sd;
   for(i=0;i<t->sp.lambda;i++)
     t->causeDivision[i]=0;
-  for(i=0;i<mud;i++){
-    for(j=i+1;j<mud;j++){
-      d=0;
-      for(k=0;k<N;k++)
-        d+=pow(fabs(t->rgrgx[t->index[i]][k]-t->rgrgx[t->index[j]][k]),2);
-      d=sqrt(d);
-      if(d/(i+j+2) >= Sd){
-        t->shouldSplit=1;
-        if(t->causeDivision[t->index[i]]>0)
-          t->causeDivision[t->index[j]]=1+(t->causeDivision[t->index[i]]%2);
-        else if(t->causeDivision[t->index[j]]>0)
-          t->causeDivision[t->index[i]]=1+(t->causeDivision[t->index[j]]%2);
-        else{
-          t->causeDivision[t->index[i]]=1;
-          t->causeDivision[t->index[j]]=2;
+
+  if(t->canSplit){
+    for(i=0;i<mud;i++){
+      for(j=i+1;j<mud;j++){
+        d=0;
+        for(k=0;k<N;k++)
+          d+=pow(fabs(t->rgrgx[t->index[i]][k]-t->rgrgx[t->index[j]][k]),2);
+        d=sqrt(d);
+        if(d/(i+j+2) >= Sd){
+          t->shouldSplit=1;
+          if(t->causeDivision[t->index[i]]>0)
+            t->causeDivision[t->index[j]]=1+(t->causeDivision[t->index[i]]%2);
+          else if(t->causeDivision[t->index[j]]>0)
+            t->causeDivision[t->index[i]]=1+(t->causeDivision[t->index[j]]%2);
+          else{
+            t->causeDivision[t->index[i]]=1;
+            t->causeDivision[t->index[j]]=2;
+          }
         }
       }
     }
   }
 
+
   /* clustering if division is needed */
   if(t->shouldSplit){
-    //find two points that shouldn't be together in i and j
+    /* find two points that shouldn't be together in i and j */
     int* initialCentroids=(int*)new_void(2,sizeof(int));
     for(k=0;k<mud;k++){
       if(t->causeDivision[t->index[k]]>0)
         initialCentroids[t->causeDivision[t->index[k]]-1]=t->index[k];
     }
+    /* clustering */
     free(t->clusters);
     t->clusters=kmeans(t->rgrgx,t->sp.lambda,t->sp.N,2,
                        t->divisionThreshold*t->divisionThreshold*.1,initialCentroids,
                        t->sp.weights,NULL);
-  }
 
-  /* calculate xmean and rgBDz~N(0,C) */
-  for (i = 0; i < N; ++i) {
-    t->rgxold[i] = t->rgxmean[i];
-    t->rgxmean[i] = 0.;
-    for (iNk = 0; iNk < t->sp.mu; ++iNk)
-      t->rgxmean[i] += t->sp.weights[iNk] * t->rgrgx[t->index[iNk]][i];
-    t->rgBDz[i] = sqrt(t->sp.mueff)*(t->rgxmean[i] - t->rgxold[i])/t->sigma;
-  }
+    t->other = (cmaes_t*) new_void(1,sizeof(cmaes_t));
+    cmaes_clone(t,t->other);
 
-  /* calculate z := D^(-1) * B^(-1) * rgBDz into rgdTmp */
-  for (i = 0; i < N; ++i) {
+    /* calculate xmean and rgBDz~N(0,C) */
+    for(i=0;i<N;i++){
+      t->rgxold[i] = t->rgxmean[i];
+      t->rgxmean[i] = t->rgrgx[initialCentroids[0]][i];
+      t->other->rgxmean[i] = t->rgrgx[initialCentroids[1]][i];
+      t->rgBDz[i] = sqrt(t->sp.mueff)*(t->rgxmean[i] - t->rgxold[i])/t->sigma;
+      t->other->rgBDz[i] = sqrt(t->other->sp.mueff)*(t->other->rgxmean[i] - t->rgxold[i])/t->other->sigma;
+    }
+
+    /* calculate z := D^(-1) * B^(-1) * rgBDz into rgdTmp */
+    for (i = 0; i < N; ++i) {
     if (!flgdiag)
       for (j = 0, sum = 0.; j < N; ++j)
         sum += t->B[j][i] * t->rgBDz[j];
     else
       sum = t->rgBDz[i];
     t->rgdTmp[i] = sum / t->rgD[i];
-  }
+    }
 
-  /* TODO?: check length of t->rgdTmp and set an upper limit, e.g. 6 stds */
-  /* in case of manipulation of arx,
+    /* cumulation for sigma (ps) : unchanged */
+
+    /* calculate norm(ps)^2 */
+    for (i = 0, psxps = 0.; i < N; ++i)
+    psxps += t->rgps[i] * t->rgps[i];
+
+    /* cumulation for covariance matrix (pc) using B*D*z~N(0,C) */
+    hsig = sqrt(psxps) / sqrt(1. - pow(1.-t->sp.cs, 2*t->gen)) / t->chiN
+    < 1.4 + 2./(N+1);
+    for (i = 0; i < N; ++i) {
+    t->rgpc[i] = (1. - t->sp.ccumcov) * t->rgpc[i] +
+      hsig * sqrt(t->sp.ccumcov * (2. - t->sp.ccumcov)) * t->rgBDz[i];
+    t->other->rgpc[i] = (1. - t->other->sp.ccumcov) * t->other->rgpc[i] +
+      hsig * sqrt(t->other->sp.ccumcov * (2. - t->other->sp.ccumcov)) * t->other->rgBDz[i];
+    }
+
+    /* stop initial phase */
+    if (t->flgIniphase &&
+      t->gen > douMin(1/t->sp.cs, 1+N/t->sp.mucov))
+    {
+      if (psxps / t->sp.damps / (1.-pow((1. - t->sp.cs), t->gen))
+          < N * 1.05){
+        t->flgIniphase = 0;
+        t->other->flgIniphase = 0;
+      }
+    }
+
+    /* update of C  */
+
+    Adapt_C2(t, hsig, 1);
+    Adapt_C2(t->other, hsig, 1);
+
+    /* update of sigma */
+    double d0=0,d1=0;
+    for(i=0;i<N;i++){
+      d0 += pow(t->rgxmean[i] - t->rgxold[i],2);
+      d1 += pow(t->rgxmean[i]-t->other->rgxmean[i],2);
+    }
+    t->sigma = douMin(t->sigma,douMin(d0/t->maxEW,d1/t->maxEW));
+    d0=0;
+    for(i=0;i<N;i++){
+      d0 += pow(t->other->rgxmean[i] - t->rgxold[i],2);
+    }
+    t->other->sigma = douMin(t->other->sigma,douMin(d0/t->other->maxEW,d1/t->other->maxEW));
+
+    t->state = 3;
+    t->other->state = 3;
+
+
+    return t->rgrgx[initialCentroids[0]];
+  }
+  else/* if(shouldSplit) */
+  {
+    /* calculate xmean and rgBDz~N(0,C) */
+    for (i = 0; i < N; ++i) {
+    t->rgxold[i] = t->rgxmean[i];
+    t->rgxmean[i] = 0.;
+    for (iNk = 0; iNk < t->sp.mu; ++iNk)
+      t->rgxmean[i] += t->sp.weights[iNk] * t->rgrgx[t->index[iNk]][i];
+    t->rgBDz[i] = sqrt(t->sp.mueff)*(t->rgxmean[i] - t->rgxold[i])/t->sigma;
+    }
+
+    /* calculate z := D^(-1) * B^(-1) * rgBDz into rgdTmp */
+    for (i = 0; i < N; ++i) {
+    if (!flgdiag)
+      for (j = 0, sum = 0.; j < N; ++j)
+        sum += t->B[j][i] * t->rgBDz[j];
+    else
+      sum = t->rgBDz[i];
+    t->rgdTmp[i] = sum / t->rgD[i];
+    }
+
+    /* TODO?: check length of t->rgdTmp and set an upper limit, e.g. 6 stds */
+    /* in case of manipulation of arx,
      this can prevent an increase of sigma by several orders of magnitude
      within one step; a five-fold increase in one step can still happen.
-  */
-  /*
+    */
+    /*
     for (j = 0, sum = 0.; j < N; ++j)
       sum += t->rgdTmp[j] * t->rgdTmp[j];
     if (sqrt(sum) > chiN + 6. * sqrt(0.5)) {
       rgdTmp length should be set to upper bound and hsig should become zero
     }
-  */
+    */
 
-  /* cumulation for sigma (ps) using B*z */
-  for (i = 0; i < N; ++i) {
+    /* cumulation for sigma (ps) using B*z */
+    for (i = 0; i < N; ++i) {
     if (!flgdiag)
       for (j = 0, sum = 0.; j < N; ++j)
         sum += t->B[i][j] * t->rgdTmp[j];
@@ -1296,22 +1449,22 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
       sum = t->rgdTmp[i];
     t->rgps[i] = (1. - t->sp.cs) * t->rgps[i] +
       sqrt(t->sp.cs * (2. - t->sp.cs)) * sum;
-  }
+    }
 
-  /* calculate norm(ps)^2 */
-  for (i = 0, psxps = 0.; i < N; ++i)
+    /* calculate norm(ps)^2 */
+    for (i = 0, psxps = 0.; i < N; ++i)
     psxps += t->rgps[i] * t->rgps[i];
 
-  /* cumulation for covariance matrix (pc) using B*D*z~N(0,C) */
-  hsig = sqrt(psxps) / sqrt(1. - pow(1.-t->sp.cs, 2*t->gen)) / t->chiN
+    /* cumulation for covariance matrix (pc) using B*D*z~N(0,C) */
+    hsig = sqrt(psxps) / sqrt(1. - pow(1.-t->sp.cs, 2*t->gen)) / t->chiN
     < 1.4 + 2./(N+1);
-  for (i = 0; i < N; ++i) {
+    for (i = 0; i < N; ++i) {
     t->rgpc[i] = (1. - t->sp.ccumcov) * t->rgpc[i] +
       hsig * sqrt(t->sp.ccumcov * (2. - t->sp.ccumcov)) * t->rgBDz[i];
-  }
+    }
 
-  /* stop initial phase */
-  if (t->flgIniphase &&
+    /* stop initial phase */
+    if (t->flgIniphase &&
       t->gen > douMin(1/t->sp.cs, 1+N/t->sp.mucov))
     {
       if (psxps / t->sp.damps / (1.-pow((1. - t->sp.cs), t->gen))
@@ -1319,27 +1472,27 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
         t->flgIniphase = 0;
     }
 
-#if 0
-  /* remove momentum in ps, if ps is large and fitness is getting worse */
-  /* This is obsolete due to hsig and harmful in a dynamic environment */
-  if(psxps/N > 1.5 + 10.*sqrt(2./N)
+    #if 0
+    /* remove momentum in ps, if ps is large and fitness is getting worse */
+    /* This is obsolete due to hsig and harmful in a dynamic environment */
+    if(psxps/N > 1.5 + 10.*sqrt(2./N)
      && t->arFuncValueHist[0] > t->arFuncValueHist[1]
      && t->arFuncValueHist[0] > t->arFuncValueHist[2]) {
     double tfac = sqrt((1 + douMax(0, log(psxps/N))) * N / psxps);
     for (i=0; i<N; ++i)
       t->rgps[i] *= tfac;
     psxps *= tfac*tfac;
-  }
-#endif
+    }
+    #endif
 
-  /* update of C  */
+    /* update of C  */
 
-  Adapt_C2(t, hsig);
+    Adapt_C2(t, hsig, 0);
 
-  /* Adapt_C(t); not used anymore */
+    /* Adapt_C(t); not used anymore */
 
-#if 0
-  if (t->sp.ccov != 0. && t->flgIniphase == 0) {
+    #if 0
+    if (t->sp.ccov != 0. && t->flgIniphase == 0) {
     int k;
 
     t->flgEigensysIsUptodate = 0;
@@ -1357,16 +1510,19 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
             * (t->rgrgx[t->index[k]][j] - t->rgxold[j])
             / t->sigma / t->sigma;
       }
+    }
+    #endif
+
+
+    /* update of sigma */
+    t->sigma *= exp(((sqrt(psxps)/t->chiN)-1.)*t->sp.cs/t->sp.damps);
+
+    t->state = 3;
+
+    return (t->rgxmean);
   }
-#endif
 
 
-  /* update of sigma */
-  t->sigma *= exp(((sqrt(psxps)/t->chiN)-1.)*t->sp.cs/t->sp.damps);
-
-  t->state = 3;
-
-  return (t->rgxmean);
 
 } /* cmaes_UpdateDistribution() */
 
@@ -1374,7 +1530,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
 /* --------------------------------------------------------- */
 /* --------------------------------------------------------- */
 static void
-Adapt_C2(cmaes_t *t, int hsig)
+Adapt_C2(cmaes_t *t, int hsig, short noRankMuUpdate)
 {
   int i, j, k, N=t->sp.N;
   int flgdiag = ((t->sp.diagonalCov == 1) || (t->sp.diagonalCov >= t->gen));
@@ -1391,15 +1547,17 @@ Adapt_C2(cmaes_t *t, int hsig)
     /* update covariance matrix */
     for (i = 0; i < N; ++i)
       for (j = flgdiag ? i : 0; j <= i; ++j) {
-        t->C[i][j] = (1 - ccov1 - ccovmu) * t->C[i][j]
+        t->C[i][j] = (1 - ccov1 - (noRankMuUpdate?0:ccovmu)) * t->C[i][j]
           + ccov1
             * (t->rgpc[i] * t->rgpc[j]
                + (1-hsig)*t->sp.ccumcov*(2.-t->sp.ccumcov) * t->C[i][j]);
-        for (k = 0; k < t->sp.mu; ++k) { /* additional rank mu update */
-          t->C[i][j] += ccovmu * t->sp.weights[k]
-            * (t->rgrgx[t->index[k]][i] - t->rgxold[i])
-            * (t->rgrgx[t->index[k]][j] - t->rgxold[j])
-            / sigmasquare;
+        if(!noRankMuUpdate){
+          for (k = 0; k < t->sp.mu; ++k) { /* additional rank mu update */
+            t->C[i][j] += ccovmu * t->sp.weights[k]
+              * (t->rgrgx[t->index[k]][i] - t->rgxold[i])
+              * (t->rgrgx[t->index[k]][j] - t->rgxold[j])
+              / sigmasquare;
+          }
         }
       }
     /* update maximal and minimal diagonal value */
@@ -1976,7 +2134,7 @@ cmaes_TestForTermination( cmaes_t *t)
       }
 
       /* TolFunHist */
-      if (t->gen > *(t->arFuncValueHist-1)) {
+      if (t->gen > (int)*(t->arFuncValueHist-1)) {
         range = rgdouMax(t->arFuncValueHist, (int)*(t->arFuncValueHist-1))
           - rgdouMin(t->arFuncValueHist, (int)*(t->arFuncValueHist-1));
         if (range <= t->sp.stopTolFunHist)
@@ -2185,7 +2343,7 @@ void cmaes_ReadFromFilePtr( cmaes_t *t, FILE *fp)
                 if (sscanf(sin2, "%lg", &d) < 1 && deltaprinttimefirst < 1)
                   d = 0; /* default at first time */
                 if (deltaprinttime >= d && !flglockprint) {
-                  cmaes_WriteToFilePtr(t, sin1, stdout);
+                  //cmaes_WriteToFilePtr(t, sin1, stdout);
                   flgprinted = 1;
                 }
                 if(d < 0)
@@ -2927,6 +3085,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
                int lambda,
                const char * filename)
 {
+  printf("Readpara init called.\n");
   int i, N;
   /* TODO: make sure cmaes_readpara_init has not been called already */
   t->filename = NULL; /* set after successful Read */
@@ -3071,6 +3230,8 @@ void cmaes_readpara_exit(cmaes_readpara_t *t)
 {
   if (t->filename != NULL)
     free( t->filename);
+  printf("Before free in cmaes_readpara_exit() :\n");
+  printf("xstart : %d\n",t->xstart);
   if (t->xstart != NULL) /* not really necessary */
     free( t->xstart);
   if (t->typicalX != NULL)
@@ -3082,10 +3243,14 @@ void cmaes_readpara_exit(cmaes_readpara_t *t)
   if (t->weights != NULL)
     free( t->weights);
 
-  free((void*)t->rgsformat);
-  free(t->rgpadr);
-  free((void*)t->rgskeyar);
-  free(t->rgp2adr);
+  if(t->rgsformat)
+    free((void*)t->rgsformat);
+  if(t->rgpadr)
+    free(t->rgpadr);
+  if(t->rgskeyar)
+    free((void*)t->rgskeyar);
+  if(t->rgp2adr)
+    free(t->rgp2adr);
   free(t->weigkey);
 }
 
