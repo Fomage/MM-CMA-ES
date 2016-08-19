@@ -301,7 +301,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
   int i, ivillage;
   cmaes_t *evo=NULL; /* for convenience */
   char const * stop; /* stop message */
-  short stahp=0,splitOccured=0;;
+  short stahp=0,splitOccured=0;
   cmaes_t** buffer = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
   for(i=0;i<t->max_villages;i++)
     buffer[i]=NULL;
@@ -338,6 +338,9 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
             for(i=0;i<buffercount;i++)
               buffer[i]->canSplit=0;
           }
+        }else if((ivillage==1) && (evo->publicFitness[evo->index[0]] != evo->publicFitness[evo->index[evo->sp.lambda-1]])){
+          printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
+                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);
         }
 
         /* read control signals for output and termination */
@@ -367,6 +370,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 			t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
 		  }
 		  /* best estimator for the optimum is xmean, therefore check */
+		  printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
 		  if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
 			t->fbestever = fmean;
 			t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
@@ -682,7 +686,8 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   t->rgps = new_double(N);for(i=-1;++i<N;t->rgps[i]=source->rgps[i]);
   t->rgdTmp = new_double(N+1);for(i=-1;++i<N+1;t->rgdTmp[i]=source->rgdTmp[i]);
   t->rgBDz = new_double(N);for(i=-1;++i<N;t->rgBDz[i]=source->rgBDz[i]);
-  t->rgxmean = new_double(N+2);for(i=-1;++i<N+2;t->rgxmean[i]=source->rgxmean[i]);++t->rgxmean;
+  t->rgxmean = new_double(N+2);++t->rgxmean;
+    *(t->rgxmean-1) = (int)N;for(i=-1;++i<N+1;t->rgxmean[i]=source->rgxmean[i]);
   t->rgxold = new_double(N+2);for(i=-1;++i<N+2;t->rgxold[i]=source->rgxold[i]);++t->rgxold;
   t->rgxbestever = new_double(N+3);for(i=-1;++i<N+3;t->rgxbestever[i]=source->rgxbestever[i]);++t->rgxbestever;
   t->rgout = new_double(N+2);for(i=-1;++i<N+2;t->rgout[i]=source->rgout[i]); ++t->rgout;
@@ -711,7 +716,7 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   for (i = 0; i < t->sp.lambda; ++i) {
     t->rgrgx[i] = new_double(N+2);
     for(j=-1;++j<N+2;t->rgrgx[i][j]=source->rgrgx[i][j]);
-    t->rgrgx[i][0] = N;
+    t->rgrgx[i][0] = (int) N;
     t->rgrgx[i]++;
   }
 
@@ -736,7 +741,7 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
 void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
 {
   int j, N;
-  t->filename = (char*) new_void(strlen(source->filename),sizeof(char));
+  t->filename = (char*) new_void(99,sizeof(char));
   strcpy(t->filename, source->filename);
 
   //for check only
@@ -758,7 +763,7 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->flgNoRandom = source->flgNoRandom;
   t->lambda = source->lambda;
   t->mu = source->mu;
-  t->weigkey = (char *)new_void(strlen(source->weigkey), sizeof(char));
+  t->weigkey = (char *)new_void(99, sizeof(char));
   strcpy(t->weigkey, source->weigkey);
   t->cs = source->cs;
   t->damps = source->damps;
@@ -787,7 +792,8 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->stopTolX = source->stopTolX;
   t->stopTolUpXFactor = source->stopTolUpXFactor;
   t->flgNoRandom = source->flgNoRandom;
-  t->weights = NULL;
+
+  t->weights = new_double(source->mu);for(j=-1;++j<source->mu;t->weights[j]=source->weights[j]);
 
   t->updateCmode.flgalways = source->updateCmode.flgalways;
   t->facupdateCmode = source->facupdateCmode;
@@ -2126,7 +2132,7 @@ cmaes_TestForTermination( cmaes_t *t)
                      rgdouMax(t->rgFuncValue, t->sp.lambda)) -
         douMin(rgdouMin(t->arFuncValueHist, (int)douMin(t->gen, *(t->arFuncValueHist-1))),
                rgdouMin(t->rgFuncValue, t->sp.lambda));
-
+      //printf("Termination : range = %f\n",range);
       if (t->gen > 0 && range <= t->sp.stopTolFun) {
         cp += sprintf(cp,
                       "TolFun: function value differences %7.2e < stopTolFun=%7.2e\n",

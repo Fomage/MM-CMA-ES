@@ -264,8 +264,11 @@ double f_sphere( double const *x)
 	int i;
 	double sum = 0.;
 	int DIM = (int)(x[-1]);
+	if(DIM<=0)
+        printf("Warning f_sphere : DIM=%d\n",DIM);
 	for (i = 0; i < DIM; ++i)
 		sum += x[i]*x[i];
+    //printf("TEST f_sphere : return=%f\n",sum);
 	return sum;
 }
 
