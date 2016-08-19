@@ -3,14 +3,14 @@
 #include <emscripten.h>
 #include <cmaes_interface.h>
 
-cmaes_t evo;
+mm_cmaes_t evo;
 
 void cmaesInitialize(void) {
   double inxstart[] = {0, 0};
   double inrgstddev[] = {0.5, 0.5};
   long int inseed = 0;
   int lambda = 0;
-  cmaes_init(&evo, 2, inxstart, inrgstddev, inseed, lambda, NULL);
+  mm_cmaes_init(&evo,2, 2, inxstart, inrgstddev, inseed, lambda, NULL);
 }
 
 double fitness;
@@ -19,61 +19,80 @@ void cmaesSetFitness(double newFitness) {
   fitness = newFitness;
 }
 
+double cmaesTargetFunc(double const *a) {
+  EM_ASM_ARGS({
+        _cmaesSetFitness(cmaesFunction($0, $1));
+      }, a[0], a[1]);
+  return fitness;
+}
+
 bool cmaesStep() {
-  const char *termination = cmaes_TestForTermination(&evo);
-  if (termination) {
-    EM_ASM_ARGS({
+  //const char *termination;
+  if (evo.stahp) {
+	//termination = cmaes_TestForTermination(&evo);
+    /*EM_ASM_ARGS({
         cmaesSetTerminationMessage(Pointer_stringify($0))
-    }, termination);
+    }, termination);*/
     return false;
   }
-  double *const*pop;
+
   const double *xmean;
   const double *rgD;
-  int i;
+  int i,ivillage;
 
-  pop = cmaes_SamplePopulation(&evo);
-
-  xmean = cmaes_GetPtr(&evo, "xmean");
-  EM_ASM_ARGS({
-      cmaesXMean = ([$0, $1]);
-    }, xmean[0], xmean[1]);
-
-  EM_ASM_ARGS({
-      cmaesEigenVectors = ([[$0, $1], [$2, $3]]);
-    }, evo.B[0][0], evo.B[1][0], evo.B[0][1], evo.B[1][1]);
-
-  rgD = cmaes_GetPtr(&evo, "diag(D)");
-  EM_ASM_ARGS({
-      cmaesAxisLengths = ([$0, $1]);
-    }, rgD[0], rgD[1]);
+  mm_cmaes_run(&evo,&cmaesTargetFunc);
   
-  EM_ASM_ARGS({
-      cmaesSigma = ($0);
-    }, evo.sigma);
-	
-  EM_ASM_ARGS({
-      cmaesDivisionThreshold = ($0);
-    }, evo.divisionThreshold);
-
+  EM_ASM(cmaesXMean = []);
+  EM_ASM(cmaesEigenVectors = []);
+  EM_ASM(cmaesAxisLengths = []);
+  EM_ASM(cmaesSigma = []);
   EM_ASM(cmaesPoints = []);
-  for (i = 0; i < cmaes_Get(&evo, "popsize"); i++) {
-    /* FIXME: workaround since EM_ASM_DOUBLE seems to truncate the result. */
-    EM_ASM_ARGS({
-        _cmaesSetFitness(cmaesFunction($0, $1));
-      }, pop[i][0], pop[i][1]);
-    evo.publicFitness[i] = fitness;
+  
+  for(ivillage=0;ivillage<evo.nb_villages;ivillage++){
+	  xmean = cmaes_GetPtr(evo.villages[ivillage], "xmean");
+	  EM_ASM_ARGS({
+		  cmaesXMean[$0] = ([$1, $2]);
+		}, ivillage, xmean[0], xmean[1]);
+
+	  EM_ASM_ARGS({
+		  cmaesEigenVectors[$0] = ([[$1, $2], [$3, $4]]);
+		}, ivillage,
+		evo.villages[ivillage]->B[0][0],
+		evo.villages[ivillage]->B[1][0],
+		evo.villages[ivillage]->B[0][1], 
+		evo.villages[ivillage]->B[1][1]);
+
+	  rgD = cmaes_GetPtr(evo.villages[ivillage], "diag(D)");
+	  EM_ASM_ARGS({
+		  cmaesAxisLengths[$0] = ([$1, $2]);
+		}, ivillage, rgD[0], rgD[1]);
+	  
+	  EM_ASM_ARGS({
+		  cmaesSigma[$0] = ($1);
+		}, ivillage, evo.villages[ivillage]->sigma);
+		
+	  /*EM_ASM_ARGS({
+		  cmaesDivisionThreshold = ($0);
+		}, evo.divisionThreshold);*/
+		
+	  EM_ASM_ARGS({
+		  cmaesPoints[$0] = [];
+		}, ivillage);
+	  for (i = 0; i < cmaes_Get(evo.villages[ivillage], "popsize"); i++) {
+		/* FIXME: workaround since EM_ASM_DOUBLE seems to truncate the result. */
+		EM_ASM_ARGS({
+			cmaesPoints[$0].push([$1, $2, $3, $4]);
+		  }, ivillage,
+			evo.villages[ivillage]->rgrgx[i][0],
+			evo.villages[ivillage]->rgrgx[i][1],
+			evo.villages[ivillage]->causeDivision[evo.villages[ivillage]->index[i]],
+			evo.villages[ivillage]->clusters[evo.villages[ivillage]->index[i]]);
+	  }
+	  /*EM_ASM_ARGS({
+		  cmaesShouldSplit[$0] = ($1);
+		}, ivillage, evo.villages[ivillage]->shouldSplit);*/
   }
-  cmaes_UpdateDistribution(&evo, evo.publicFitness);
-  for (i = 0; i < cmaes_Get(&evo, "popsize"); i++) {
-    /* FIXME: workaround since EM_ASM_DOUBLE seems to truncate the result. */
-    EM_ASM_ARGS({
-        cmaesPoints.push([$0, $1, $2, $3]);
-      }, pop[evo.index[i]][0], pop[evo.index[i]][1],evo.causeDivision[evo.index[i]], evo.clusters[evo.index[i]]);
-  }
-  EM_ASM_ARGS({
-      cmaesShouldSplit = ($0);
-    }, evo.shouldSplit);
+  
   EM_ASM(cmaesPushStep());
   return true;
 }

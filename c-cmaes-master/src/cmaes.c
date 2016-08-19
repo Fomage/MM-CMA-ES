@@ -290,34 +290,35 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   for(i=1;i<t->max_villages;i++)
     t->villages[i]=NULL;
 
+  t->stahp=0;
+
   //init t->xbestever
 }
 
 double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 {
-  printf("mm_cmaes_run() called.\n");
+  //printf("mm_cmaes_run() called.\n");
 
   double fmean;
   int i, ivillage;
   cmaes_t *evo=NULL; /* for convenience */
   char const * stop; /* stop message */
-  short stahp=0,splitOccured=0;
+  char splitOccured=0;
   cmaes_t** buffer = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
   for(i=0;i<t->max_villages;i++)
     buffer[i]=NULL;
-  int buffercount;
+  int buffercount=0;
   if(t->max_villages<=1)
     mm_cmaes_allowSplit(t,0);
 
-  while(!stahp){
-    stahp=1;
+    t->stahp=1;
     buffercount=0;
     //printf("mm_cmaes_run() main loop : %d/%d villages.\n",t->nb_villages,t->max_villages);
     for(ivillage = 0 ; ivillage<t->max_villages ; ivillage++){
       evo = t->villages[ivillage];
       if(evo){
         //printf("Updating village %d\n",ivillage);
-        stahp=0;
+        t->stahp=0;
         t->pop[ivillage] = cmaes_SamplePopulation(evo);
         for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
           evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
@@ -339,8 +340,8 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
               buffer[i]->canSplit=0;
           }
         }else if((ivillage==1) && (evo->publicFitness[evo->index[0]] != evo->publicFitness[evo->index[evo->sp.lambda-1]])){
-          printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
-                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);
+          /*printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
+                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);*/
         }
 
         /* read control signals for output and termination */
@@ -381,7 +382,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 
 		  if (strncmp(stop, "Manual", 6) == 0) {
             printf("Manual stop\n"); fflush(stdout);
-            stahp=1;
+            t->stahp=1;
             break;
 		  }
         }/* if(testForTermination) */
@@ -396,8 +397,6 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
       printf("Added village.\n");
     }
     //printf("mm_cmaes_run() main loop end : %d/%d villages.\n",t->nb_villages,t->max_villages);
-
-  }/* while(goon) */
 
   free(buffer);
 

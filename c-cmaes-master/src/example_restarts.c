@@ -98,8 +98,9 @@ int main(int argn, char **args)
 
 	/* Optimize function */
     printf("Begin optimization.\n");
-	x = mm_cmaes_run(&evo,rgpFun[nb]);
-
+    while(!evo.stahp)
+	  mm_cmaes_run(&evo,rgpFun[nb]);
+    x = evo.xbestever;
 	/* here we could utilize the solution x, and finally free memory */
 
     mm_cmaes_exit(&evo);

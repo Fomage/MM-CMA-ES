@@ -196,6 +196,8 @@ typedef struct
   int countevals;
   double fbestever;
   double* xbestever;
+
+  char stahp;
 } mm_cmaes_t;
 
 #endif
