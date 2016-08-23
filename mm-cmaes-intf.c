@@ -10,7 +10,7 @@ void cmaesInitialize(void) {
   double inrgstddev[] = {0.5, 0.5};
   long int inseed = 0;
   int lambda = 0;
-  mm_cmaes_init(&evo,2, 2, inxstart, inrgstddev, inseed, lambda, NULL);
+  mm_cmaes_init(&evo,1, 2, inxstart, inrgstddev, inseed, lambda, NULL);
 }
 
 double fitness;

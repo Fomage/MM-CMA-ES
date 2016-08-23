@@ -52,7 +52,6 @@ int main(int argn, char **args)
 	FILE *fp = NULL;
 	int nb = 0;
 	int maxnb;
-	double *x;
 
 	/* Put together objective functions */
 	rgpFun[0] = f_sphere;
@@ -98,13 +97,14 @@ int main(int argn, char **args)
 
 	/* Optimize function */
     printf("Begin optimization.\n");
-    while(!evo.stahp)
+    while(!evo.stahp){
 	  mm_cmaes_run(&evo,rgpFun[nb]);
-    x = evo.xbestever;
-	/* here we could utilize the solution x, and finally free memory */
+    }
+
+	printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
+        evo.countevals, evo.fbestever);
 
     mm_cmaes_exit(&evo);
-	free(x);
 
 	return 0;
 

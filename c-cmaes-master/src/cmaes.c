@@ -291,6 +291,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     t->villages[i]=NULL;
 
   t->stahp=0;
+  t->allowSplit = (t->max_villages>t->nb_villages);
 
   //init t->xbestever
 }
@@ -319,11 +320,26 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
       if(evo){
         //printf("Updating village %d\n",ivillage);
         t->stahp=0;
+
         t->pop[ivillage] = cmaes_SamplePopulation(evo);
         for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
           evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
+
+        /* prevent newborn villages from spawning any more */
+        if(evo->gen <= 1)
+          evo->canSplit = 0;
+        else if(evo->gen == 2)
+          evo->canSplit = t->allowSplit;
+
+        /* prevent recent parents from immediately spawning again */
+        if(evo->other){
+          evo->other = NULL;
+          evo->canSplit = 0;
+          //printf("Prevented village %d from reswpaning too soon.\n",ivillage);
+        }else
+          evo->canSplit = (evo->canSplit ||t->allowSplit);
+
         /* update search distribution */
-        //printf("\tUpdating distribution of village %d\n",ivillage);
         cmaes_UpdateDistribution(evo, evo->publicFitness);
 
         /* handle split */
@@ -331,7 +347,6 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
         if(evo->shouldSplit){
           splitOccured=1;
           printf("\tSplit detected in village %d\n",ivillage);
-          printf("\txstart adresses : %d, %d\n",evo->other->sp.xstart,evo->sp.xstart);
           buffer[buffercount]=evo->other;
           buffercount++;
           if(buffercount >= t->max_villages - t->nb_villages){
@@ -339,16 +354,16 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
             for(i=0;i<buffercount;i++)
               buffer[i]->canSplit=0;
           }
-        }else if((ivillage==1) && (evo->publicFitness[evo->index[0]] != evo->publicFitness[evo->index[evo->sp.lambda-1]])){
-          /*printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
-                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);*/
+        /*}else if((ivillage==1) && (evo->publicFitness[evo->index[0]] != evo->publicFitness[evo->index[evo->sp.lambda-1]])){
+          printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
+                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);}*/
         }
 
         /* read control signals for output and termination */
         cmaes_ReadSignals(evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
         fflush(stdout);
 
-        if((stop = cmaes_TestForTermination(evo)) && (!splitOccured)){/* termination conditions are invalid right after a split */
+        if((stop = cmaes_TestForTermination(evo)) && (!splitOccured)){/* termination conditions are invalid right after a split*/
           t->countevals+=evo->countevals;
 
           /* print something */
@@ -369,9 +384,10 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 		  if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
 			t->fbestever = cmaes_Get(evo, "fbestever");
 			t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
+			printf("Village %d did %.5e !\n",ivillage,t->fbestever);
 		  }
 		  /* best estimator for the optimum is xmean, therefore check */
-		  printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
+		  //printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
 		  if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
 			t->fbestever = fmean;
 			t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
@@ -385,6 +401,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
             t->stahp=1;
             break;
 		  }
+
         }/* if(testForTermination) */
       }/* if(evo) */
     }/* for(ivillage) */
@@ -406,6 +423,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 static void mm_cmaes_allowSplit(mm_cmaes_t *t, short b)
 {
   int i;
+  t->allowSplit = b;
   for(i=0;i<t->max_villages;i++){
     if(t->villages[i])
       t->villages[i]->canSplit=b;
@@ -613,6 +631,8 @@ cmaes_init_final(cmaes_t *t /* "this" */)
     cmaes_init_grid(t);
   }
 
+  t->other = NULL;
+
   return (t->publicFitness);
 
 } /* cmaes_init_final() */
@@ -641,7 +661,6 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   t->version=c_cmaes_version;
   /* char *signalsFilename; */
   cmaes_readpara_clone(&source->sp,&t->sp);
-  printf("\t\tParameters cloning done.\n");
   //t->sp=source->sp;
   cmaes_random_clone(&source->rand,&t->rand); /* random number generator */
 
@@ -672,8 +691,8 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
 
   t->dMaxSignifKond = source->dMaxSignifKond; /* not sure whether this is really save, 100 does not work well enough */
 
-  t->gen = source->gen;
-  t->countevals = source->countevals;
+  t->gen = 0;//source->gen;
+  t->countevals = 0;//source->countevals;
   t->state = source->state;
   t->dLastMinEWgroesserNull = source->dLastMinEWgroesserNull;
   t->printtime = source->printtime;
@@ -714,7 +733,7 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   t->rgrgx = (double **)new_void(t->sp.lambda, sizeof(double*));
   for (i = 0; i < t->sp.lambda; ++i) {
     t->rgrgx[i] = new_double(N+2);
-    for(j=-1;++j<N+2;t->rgrgx[i][j]=source->rgrgx[i][j]);
+    //for(j=-1;++j<N+2;t->rgrgx[i][j]=source->rgrgx[i][j]);
     t->rgrgx[i][0] = (int) N;
     t->rgrgx[i]++;
   }
@@ -735,6 +754,8 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
   if(t->sp.flgNoRandom){
     cmaes_init_grid(t);
   }
+
+  t->other = NULL;
 }
 
 void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
@@ -800,7 +821,6 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
 
   t->xstart = new_double(N);
   for(j=-1;++j<N;t->xstart[j]=source->xstart[j]);
-  printf("xstart comparison : %d, %d\n",t->xstart,source->xstart);
 
   t->rgInitialStds = new_double(N);
   for(j=-1;++j<N;t->rgInitialStds[j]=source->rgInitialStds[j]);
@@ -810,7 +830,7 @@ void cmaes_random_clone(cmaes_random_t *source, cmaes_random_t *t)
 {
   int i;
   t->startseed = source->startseed;
-  t->aktseed = source->aktseed;
+  t->aktseed = cmaes_random_Long(source);
   t->aktrand = source->aktrand;
   t->rgrand = (long *) new_void(32, sizeof(long));for(i=-1;++i<32;t->rgrand[i]=source->rgrand[i]);
 
@@ -1368,12 +1388,12 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
 
     /* cumulation for covariance matrix (pc) using B*D*z~N(0,C) */
     hsig = sqrt(psxps) / sqrt(1. - pow(1.-t->sp.cs, 2*t->gen)) / t->chiN
-    < 1.4 + 2./(N+1);
+      < 1.4 + 2./(N+1);
     for (i = 0; i < N; ++i) {
-    t->rgpc[i] = (1. - t->sp.ccumcov) * t->rgpc[i] +
-      hsig * sqrt(t->sp.ccumcov * (2. - t->sp.ccumcov)) * t->rgBDz[i];
-    t->other->rgpc[i] = (1. - t->other->sp.ccumcov) * t->other->rgpc[i] +
-      hsig * sqrt(t->other->sp.ccumcov * (2. - t->other->sp.ccumcov)) * t->other->rgBDz[i];
+      t->rgpc[i] = (1. - t->sp.ccumcov) * t->rgpc[i] +
+        hsig * sqrt(t->sp.ccumcov * (2. - t->sp.ccumcov)) * t->rgBDz[i];
+      t->other->rgpc[i] = (1. - t->other->sp.ccumcov) * t->other->rgpc[i] +
+        hsig * sqrt(t->other->sp.ccumcov * (2. - t->other->sp.ccumcov)) * t->other->rgBDz[i];
     }
 
     /* stop initial phase */
@@ -1393,7 +1413,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
     Adapt_C2(t->other, hsig, 1);
 
     /* update of sigma */
-    double d0=0,d1=0;
+    /*double d0=0,d1=0;
     for(i=0;i<N;i++){
       d0 += pow(t->rgxmean[i] - t->rgxold[i],2);
       d1 += pow(t->rgxmean[i]-t->other->rgxmean[i],2);
@@ -1403,7 +1423,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
     for(i=0;i<N;i++){
       d0 += pow(t->other->rgxmean[i] - t->rgxold[i],2);
     }
-    t->other->sigma = douMin(t->other->sigma,douMin(d0/t->other->maxEW,d1/t->other->maxEW));
+    t->other->sigma = douMin(t->other->sigma,douMin(d0/t->other->maxEW,d1/t->other->maxEW));*/
 
     t->state = 3;
     t->other->state = 3;
@@ -3235,8 +3255,6 @@ void cmaes_readpara_exit(cmaes_readpara_t *t)
 {
   if (t->filename != NULL)
     free( t->filename);
-  printf("Before free in cmaes_readpara_exit() :\n");
-  printf("xstart : %d\n",t->xstart);
   if (t->xstart != NULL) /* not really necessary */
     free( t->xstart);
   if (t->typicalX != NULL)

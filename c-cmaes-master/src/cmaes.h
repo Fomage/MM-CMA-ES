@@ -198,6 +198,7 @@ typedef struct
   double* xbestever;
 
   char stahp;
+  char allowSplit;
 } mm_cmaes_t;
 
 #endif
