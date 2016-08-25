@@ -4,6 +4,22 @@
 #include <stdlib.h>
 #include <stddef.h> /* NULL */
 #include "cmaes_interface.h"
+/* result type for performances analysis */
+typedef struct
+{
+    int countevals;
+    double fitness;
+} result;
+
+/* parameters type for performance analysis */
+typedef struct
+{
+    int N;
+    int max_villages;
+    double divisionThreshold;
+    double fusionThreshold;
+} parameters;
+
 /*___________________________________________________________________________
  *
  * Function Declarations
@@ -30,13 +46,18 @@ double f_diffpowrot( double const *x);
 double f_gleichsys5( double const *x);
 double f_rastrigin( double const *x);
 
-double * optimize(double(*pFun)(double const *), int number_of_restarts,
-		double increment_factor_for_population_size,
+result optimize(double(*pFun)(double const *),
+        parameters p,
 		char *input_parameter_filename);
+void writeResults();
 
 extern void   cmaes_random_init( cmaes_random_t *, long unsigned seed /*=0=clock*/);
 extern void   cmaes_random_exit( cmaes_random_t *);
 extern double cmaes_random_Gauss( cmaes_random_t *); /* (0,1)-normally distributed */
+
+
+#define N_MAX 40
+#define N_STEP 2
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
@@ -49,9 +70,16 @@ int main(int argn, char **args)
 	typedef double (*pfun_t)(double const *);
 	pfun_t rgpFun[99];  /* array (range) of pointer to objective function */
 	char *filename = "cmaes_initials.par"; /* input parameter file */
-	FILE *fp = NULL;
-	int nb = 0;
-	int maxnb;
+
+	int N,*scores,*witnessScore;
+	scores = (int*) calloc(N_MAX/N_STEP,sizeof(int));
+	witnessScore = (int*) calloc(N_MAX/N_STEP,sizeof(int));
+	double dt,ft;
+    double *bestdt, *bestft;
+    bestdt = (double*) calloc(N_MAX/N_STEP,sizeof(double));
+    bestft = (double*) calloc(N_MAX/N_STEP,sizeof(double));
+
+    double successThreshold = 1e-14;
 
 	/* Put together objective functions */
 	rgpFun[0] = f_sphere;
@@ -73,38 +101,53 @@ int main(int argn, char **args)
 	rgpFun[22] = f_ellirot;
 	rgpFun[23] = f_diffpowrot;
 	rgpFun[24] = f_rastrigin;
-	maxnb = 24;
+	//int maxnb = 24;
 
-	mm_cmaes_t evo;
-    mm_cmaes_init(&evo, 1, 0, NULL, NULL, 0, 0, filename);
+    int nb=0;
 
-	/* Read objective function number and number of restarts from file */
-	fp = fopen(filename, "r");
-	if (fp) {
-		fscanf(fp, " function number %d ", &nb);
-		printf("Function number %d optimised.\n",nb);
-		/* go to next line, a bit sloppy */
-		/*for (c = ' ', ret = 1; c != '\n' && c != '\0' && c != EOF && ret && ret != EOF;
-				ret=fscanf(fp, "%c", &c))*/
-			;
-		/*fscanf(fp, " restarts %d %lf", &nbrestarts, &incpopsize);
-		printf("nbrestarts = %d\n",nbrestarts);*/
-		fclose(fp);
-		if (nb < 0 || nb > maxnb)
-			nb = 0;
-	} else
-		printf("main(): could not open %s to read function number", filename);
+    result r;
+    parameters p;
 
-	/* Optimize function */
-    printf("Begin optimization.\n");
-    while(!evo.stahp){
-	  mm_cmaes_run(&evo,rgpFun[nb],1);
+    /* test on sphere for dt and ft against dimension */
+    for(N=1;N<N_MAX/N_STEP;N++){
+        /*witness*/
+        p.N = N*N_STEP;
+        p.max_villages = 1;
+        r = optimize(rgpFun[nb], p, filename);
+        if(r.fitness < successThreshold)
+            witnessScore[N]=r.countevals;
+        else
+            witnessScore[N]=-1;
+
+        scores[N] = -1;
+        p.max_villages = N*N_STEP;
+        for(dt=1./16.;dt<128;dt*=2.){
+            p.divisionThreshold=dt;
+            for(ft=1./16.;ft<128;ft*=2.){
+                printf("dt %f ft %f\n",dt,ft);
+                p.fusionThreshold=ft;
+                r = optimize(rgpFun[0],p,filename);
+                if((r.fitness < successThreshold) && (r.countevals < scores[N])){
+                    scores[N] = r.countevals;
+                    bestdt[N]=dt;
+                    bestft[N]=ft;
+                }
+            }
+        }
+
     }
 
-	printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
-        evo.countevals, evo.fbestever);
-
-    mm_cmaes_exit(&evo);
+    const char *s = "testOutput.dat";
+    FILE *fp;
+    fp = fopen( s, "wa");
+    if(fp == NULL) {
+        printf("cmaes_WriteToFile(): could not open '%s' with flag 'wa'\n", s);
+        return -1;
+    }
+    for(N=1;N<N_MAX/N_STEP;N++){
+        fprintf(fp, "Dimension %d : score %d, dt=%f, ft=%f\n",N*N_STEP,scores[N],bestdt[N],bestft[N]);
+    }
+    fclose(fp);
 
 	return 0;
 
@@ -118,112 +161,32 @@ int main(int argn, char **args)
 //___________________________________________________________________________
  */
 
-double * optimize(double(*pFun)(double const *), int nrestarts, double incpopsize, char * filename)
+result optimize(double(*pFun)(double const *), parameters p, char * filename)
 {
-	cmaes_t evo;       /* the optimizer */
-	double *const*pop; /* sampled population */
-	double *fitvals;   /* objective function values of sampled population */
-	double fbestever=0, *xbestever=NULL; /* store best solution */
-	double fmean;
-	int i, irun,
-	lambda = 0,      /* offspring population size, 0 invokes default */
-	countevals = 0;  /* used to set for restarts */
-	char const * stop; /* stop message */
+	result res;
+	mm_cmaes_t evo;
+    mm_cmaes_init(&evo, p.max_villages,
+                  0,
+                  0,
+                  p.fusionThreshold,
+                  0,
+                  p.N, NULL, NULL, 0, 0, p.divisionThreshold, filename);
 
-	for (irun = 0; irun < nrestarts+1; ++irun) /* restarts */
-	{
-		/* Parameters can be set in three ways. Here as input parameter
-		 * to cmaes_init, as value read from cmaes_initials.par in cmaes_readpara_init
-		 * during initialization, and as value read from cmaes_signals.par by
-		 * calling cmaes_ReadSignals explicitely.
-		 */
-		fitvals = cmaes_init(&evo, 0, NULL, NULL, 0, lambda, filename); /* allocs fitvals */
-		printf("%s\n", cmaes_SayHello(&evo));
-		evo.countevals = countevals; /* a hack, effects the output and termination */
-		cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* write initial values, headers in case */
+    printf("Dimension %d, dt %.3e, ft %.3e\n",p.N,p.divisionThreshold,p.fusionThreshold);
 
-		while(!(stop=cmaes_TestForTermination(&evo)))
-		{
-			/* Generate population of new candidate solutions */
-			pop = cmaes_SamplePopulation(&evo); /* do not change content of pop */
+    while(!evo.stahp){
+	  mm_cmaes_run(&evo,pFun,0);
+    }
 
-			/* Here optionally handle constraints etc. on pop. You may
-			 * call cmaes_ReSampleSingle(&evo, i) to resample the i-th
-			 * vector pop[i], see below.  Do not change pop in any other
-			 * way. You may also copy and modify (repair) pop[i] only
-			 * for the evaluation of the fitness function and consider
-			 * adding a penalty depending on the size of the
-			 * modification.
-			 */
+    printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
+        evo.countevals, evo.fbestever);
 
-			/* Compute fitness value for each candidate solution */
-			for (i = 0; i < cmaes_Get(&evo, "popsize"); ++i) {
-				/* We may resample the solution i until it lies within the
-               feasible domain here. The function
-               is_feasible() needs to be user-defined.
-               Assumptions: the feasible domain is convex, the optimum
-               is not on (or very close to) the domain boundary,
-               initialX is feasible (or in case typicalX +- 2*initialStandardDeviations
-               is feasible) and initialStandardDeviations is (are)
-               sufficiently small to prevent quasi-infinite looping.
-				 */
-				/* while (!is_feasible(pop[i]))
-	         cmaes_ReSampleSingle(&evo, i);
-				 */
-				fitvals[i] = (*pFun)(pop[i]);
-			}
+    res.countevals = evo.countevals;
+    res.fitness = evo.fbestever;
 
-			/* update search distribution */
-			cmaes_UpdateDistribution(&evo, fitvals);
+    mm_cmaes_exit(&evo);
 
-			/* read control signals for output and termination */
-			cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
-
-			fflush(stdout);
-		} /* while !cmaes_TestForTermination(&evo) */
-
-		lambda = incpopsize * cmaes_Get(&evo, "lambda");   /* needed for the restart */
-		countevals = cmaes_Get(&evo, "eval");     /* ditto */
-
-		/* print some "final" output */
-		printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
-				cmaes_Get(&evo, "gen"), cmaes_Get(&evo, "eval"),
-				evo.eigenTimings.totaltime,
-				cmaes_Get(&evo, "funval"));
-		printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
-				cmaes_Get(&evo, "maxaxislen") / cmaes_Get(&evo, "minaxislen"),
-				cmaes_Get(&evo, "maxstddev"), cmaes_Get(&evo, "minstddev")
-		);
-		printf("Stop (run %d):\n%s\n",  irun+1, cmaes_TestForTermination(&evo));
-
-		/* write some data */
-		cmaes_WriteToFile(&evo, "all", "allcmaes.dat");
-
-		/* keep best ever solution */
-		if (irun == 0 || cmaes_Get(&evo, "fbestever") < fbestever) {
-			fbestever = cmaes_Get(&evo, "fbestever");
-			xbestever = cmaes_GetInto(&evo, "xbestever", xbestever); /* alloc mem if needed */
-		}
-		/* best estimator for the optimum is xmean, therefore check */
-		if ((fmean = (*pFun)(cmaes_GetPtr(&evo, "xmean"))) < fbestever) {
-			fbestever = fmean;
-			xbestever = cmaes_GetInto(&evo, "xmean", xbestever);
-		}
-
-		cmaes_exit(&evo); /* does not effect the content of stop string and xbestever */
-
-		/* abandon restarts if target fitness value was achieved or MaxFunEvals reached */
-		if (stop) /* as it can be NULL */ {
-			if (strncmp(stop, "Fitness", 7) == 0 || strncmp(stop, "MaxFunEvals", 11) == 0)
-				break;
-		}
-		if (strncmp(stop, "Manual", 6) == 0) {
-			printf("Press RETURN to start next run\n"); fflush(stdout);
-			getchar();
-		}
-	} /* for restarts */
-
-	return xbestever; /* was dynamically allocated, should be freed in the end */
+	return res; /* was dynamically allocated, should be freed in the end */
 }
 
 #if 1

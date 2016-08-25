@@ -177,7 +177,7 @@ void   cmaes_timings_tic(cmaes_timings_t *timing);
 double cmaes_timings_toc(cmaes_timings_t *timing);
 
 void cmaes_readpara_init (cmaes_readpara_t *, int dim, const double * xstart,
-                    const double * sigma, int seed, int lambda,
+                    const double * sigma, int seed, int lambda, double dt,
                     const char * filename);
 void cmaes_readpara_exit(cmaes_readpara_t *);
 void cmaes_readpara_ReadFromFile(cmaes_readpara_t *, const char *szFileName);
@@ -253,9 +253,13 @@ static const char * c_cmaes_version = "3.20.01";
 /* --------------------------------------------------------- */
 
 void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
-        int dimension , double *xstart,
-		double *stddev, long seed, int lambda,
-		const char *input_parameter_filename)
+                   int recoveryTimeAfterSplit,
+                   int tooYoungToMerge,
+                   double fusionThreshold,
+                   double fusionFactor,
+                   int dimension,
+                   double *xstart, double *stddev, long seed, int lambda, double dt,
+                   const char *input_parameter_filename)
 {
   int i, nb=max_villages;
   FILE *fp = NULL;
@@ -263,7 +267,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   fp = fopen(input_parameter_filename, "r");
   if (fp) {
     fscanf(fp, "villages %d", &nb);
-    printf("max_villages = %d\n",nb);
+    //printf("max_villages = %d\n",nb);
     fclose(fp);
     if (nb < 0)
       nb = max_villages;
@@ -271,10 +275,20 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     printf("mm_cmaes_init(): could not open %s to read villages number\n", input_parameter_filename);
     nb = max_villages;
   }
-  t->recoveryTimeAfterSplit = 10;
-  t->tooYoungToMerge = 10;
-  t->fusionThreshold = .1;
-  t->fusionFactor = .5;
+  t->recoveryTimeAfterSplit = recoveryTimeAfterSplit;
+  t->tooYoungToMerge = tooYoungToMerge;
+  t->fusionThreshold = fusionThreshold;
+  t->fusionFactor = fusionFactor;
+
+  /*supplement defaults */
+  if(t->recoveryTimeAfterSplit <= 0)
+    t->recoveryTimeAfterSplit = 10;
+  if(t->tooYoungToMerge <= 0)
+    t->tooYoungToMerge = 10;
+  if(t->fusionThreshold <= 0)
+    t->fusionThreshold = .1;
+  if(t->fusionFactor <= 0)
+    t->fusionFactor = .5;
 
   if(nb<=0)
     t->max_villages = 1;
@@ -291,7 +305,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->villages[0] = (cmaes_t*) malloc(sizeof(cmaes_t));
   cmaes_init(t->villages[0],
                 dimension,xstart,
-                stddev,seed,lambda,
+                stddev,seed,lambda, dt,
                 input_parameter_filename);
   for(i=1;i<t->max_villages;i++)
     t->villages[i]=NULL;
@@ -351,7 +365,8 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
         if(evo->shouldSplit){
           splitOccured=1;
 
-          printf("\tSplit detected in village %d\n",ivillage);
+          if(talkative)
+            printf("\tSplit detected in village %d\n",ivillage);
           buffer[buffercount]=evo->other;
           buffercount++;
           if(buffercount >= t->max_villages - t->nb_villages){
@@ -420,7 +435,8 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
       t->villages[mm_cmaes_findFreeVillageIndex(t)] = buffer[i];
       t->nb_villages++;
       buffer[i]=NULL;
-      printf("Added village.\n");
+      if(talkative)
+        printf("Added village.\n");
     }
     //printf("mm_cmaes_run() main loop end : %d/%d villages.\n",t->nb_villages,t->max_villages);
 
@@ -428,7 +444,8 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
   for(i=0;i<t->max_villages;i++){
     for(j=0;j<i;j++){
       if(mm_cmaes_checkFusion(t,j,i)){
-        printf("Merging villages %d and %d\n",j,i);
+        if(talkative)
+          printf("Merging villages %d and %d\n",j,i);
         mm_cmaes_mergeVillages(t,i,j);
       }
     }
@@ -559,11 +576,12 @@ cmaes_init_para(cmaes_t *t, /* "this" */
                 double *inrgstddev, /* initial stds */
                 long int inseed,
                 int lambda,
+                double dt,
                 const char *input_parameter_filename)
 {
   t->version = c_cmaes_version;
   cmaes_readpara_init(&t->sp, dimension, inxstart, inrgstddev, inseed,
-                   lambda, input_parameter_filename);
+                   lambda, dt, input_parameter_filename);
 }
 
 double *
@@ -709,10 +727,11 @@ cmaes_init(cmaes_t *t, /* "this" */
                 double *inrgstddev, /* initial stds */
                 long int inseed,
                 int lambda,
+                double dt,
                 const char *input_parameter_filename)
 {
   cmaes_init_para(t, dimension, inxstart, inrgstddev, inseed,
-                   lambda, input_parameter_filename);
+                   lambda, dt, input_parameter_filename);
   return cmaes_init_final(t);
 }
 
@@ -3208,6 +3227,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
                const double * inrgsigma,
                int inseed,
                int lambda,
+               double dt,
                const char * filename)
 {
   printf("Readpara init called.\n");
@@ -3260,7 +3280,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
 
   t->N = dim;
   t->seed = (unsigned) inseed;
-  t->divisionThreshold = 0;
+  t->divisionThreshold = dt;
   t->xstart = NULL;
   t->typicalX = NULL;
   t->typicalXcase = 0;
