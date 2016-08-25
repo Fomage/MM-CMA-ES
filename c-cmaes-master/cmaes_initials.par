@@ -1,4 +1,4 @@
-villages 2
+villages 4
 function number 0  # the first number is read by example_restarts.c, see there.
 restarts 0 2                    # read by example_restarts.c, remark that restarts 
                               # with the same initialX might be sub-optimal
@@ -87,7 +87,7 @@ maxTimeFractionForEigendecompostion 1  # maximal CPU-time fraction for eigensyst
 # ccumcov       1  # default is 4/(N+4), 1 means no cumulation for p_c.
 # mucov         1  # 1 means only rank 1 update of C
 # fac*ccov      1  # multiplier for default learning rate for cov. matrix
-# divisionThreshold .5	# default is .25
+# divisionThreshold .5	# default is 1
 
 
 ## --- Syntax for input vectors xstart, sigma, mincoorstddev

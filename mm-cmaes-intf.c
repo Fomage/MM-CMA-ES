@@ -42,13 +42,18 @@ bool cmaesStep() {
 
   mm_cmaes_run(&evo,&cmaesTargetFunc);
   
+  EM_ASM(cmaesDefined = []);
   EM_ASM(cmaesXMean = []);
   EM_ASM(cmaesEigenVectors = []);
   EM_ASM(cmaesAxisLengths = []);
   EM_ASM(cmaesSigma = []);
   EM_ASM(cmaesPoints = []);
   
-  for(ivillage=0;ivillage<evo.nb_villages;ivillage++){
+  for(ivillage=0;ivillage<evo.max_villages;ivillage++){
+	if(evo.villages[ivillage]){
+	  EM_ASM_ARGS({
+		  cmaesDefined[$0] = true;
+		}, ivillage);
 	  xmean = cmaes_GetPtr(evo.villages[ivillage], "xmean");
 	  EM_ASM_ARGS({
 		  cmaesXMean[$0] = ([$1, $2]);
@@ -91,6 +96,9 @@ bool cmaesStep() {
 	  /*EM_ASM_ARGS({
 		  cmaesShouldSplit[$0] = ($1);
 		}, ivillage, evo.villages[ivillage]->shouldSplit);*/
+	}else{EM_ASM_ARGS({
+		  cmaesDefined[$0] = false;
+		}, ivillage);}
   }
   
   EM_ASM(cmaesPushStep());

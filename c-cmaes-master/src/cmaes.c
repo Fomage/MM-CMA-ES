@@ -243,6 +243,8 @@ static void cmaes_clone(cmaes_t* source, cmaes_t* target);
 static void mm_cmaes_free_village(mm_cmaes_t* t, int i);
 static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t);
 static void mm_cmaes_allowSplit(mm_cmaes_t *t, char b);
+static char mm_cmaes_checkFusion(mm_cmaes_t *t, int i, int j);
+static void mm_cmaes_mergeVillages(mm_cmaes_t *t, int i, int j);
 
 static const char * c_cmaes_version = "3.20.01";
 
@@ -266,10 +268,13 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     if (nb < 0)
       nb = max_villages;
   } else {
-    printf("mm_cmaes_init(): could not open %s to read villages number", input_parameter_filename);
+    printf("mm_cmaes_init(): could not open %s to read villages number\n", input_parameter_filename);
     nb = max_villages;
   }
-  t->recoveryTimeAfterSplit=10;
+  t->recoveryTimeAfterSplit = 10;
+  t->tooYoungToMerge = 10;
+  t->fusionThreshold = .1;
+  t->fusionFactor = .5;
 
   if(nb<=0)
     t->max_villages = 1;
@@ -302,7 +307,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
   //printf("mm_cmaes_run() called.\n");
 
   double fmean;
-  int i, ivillage;
+  int i, j, ivillage;
   cmaes_t *evo=NULL; /* for convenience */
   char const * stop; /* stop message */
   char splitOccured=0;
@@ -414,7 +419,6 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
 		  }
 
 		  mm_cmaes_free_village(t,ivillage);
-          mm_cmaes_allowSplit(t,1);
 
 		  if (strncmp(stop, "Manual", 6) == 0) {
             printf("Manual stop\n"); fflush(stdout);
@@ -435,9 +439,61 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
     }
     //printf("mm_cmaes_run() main loop end : %d/%d villages.\n",t->nb_villages,t->max_villages);
 
+  /* check for fusions */
+  for(i=0;i<t->max_villages;i++){
+    for(j=0;j<i;j++){
+      if(mm_cmaes_checkFusion(t,j,i)){
+        printf("Merging villages %d and %d\n",j,i);
+        mm_cmaes_mergeVillages(t,i,j);
+      }
+    }
+  }
+
   free(buffer);
 
   return t->xbestever;
+}
+
+static char mm_cmaes_checkFusion(mm_cmaes_t *t, int i, int j)
+{
+  if((i<t->max_villages) && (j<t->max_villages) && t->villages[i] && t->villages[j]
+     && (t->villages[i]->gen > t->tooYoungToMerge) && (t->villages[j]->gen > t->tooYoungToMerge)){
+    double Sd1,Sd2,dij,temp;
+    int k;
+    Sd1 = t->villages[i]->sigma * t->villages[i]->sigma * t->villages[i]->maxEW;
+    Sd2 = t->villages[j]->sigma * t->villages[j]->sigma * t->villages[j]->maxEW;
+    for(k=0,dij=0.;k<t->villages[i]->sp.N;k++){
+      temp = t->villages[i]->rgxmean[k] - t->villages[j]->rgxmean[k];
+      dij+= temp*temp;
+    }
+    return dij < douMax(Sd1,Sd2) * t->fusionThreshold;
+  }else
+    return 0;
+}
+
+static void mm_cmaes_mergeVillages(mm_cmaes_t *t, int iv1, int iv2)
+{
+  cmaes_t *t1 = t->villages[iv1], *t2 = t->villages[iv2];
+  int i,j,N = t1->sp.N;
+  double c = t->fusionFactor, cc = 1-t->fusionFactor;
+
+  /* update pc, xmean, ps */
+  for(i=0;i<N;i++){
+    t1->rgpc[i] = c*t1->rgpc[i] + cc*t2->rgpc[i];
+    t1->rgxmean[i] = c*t1->rgxmean[i] + cc*t2->rgxmean[i];
+    t1->rgps[i] = c*t1->rgps[i] + cc*t2->rgps[i];
+  }
+
+  /* update C */
+  for(i=0;i<N;i++){
+    for(j=0;j<i+1;j++)
+      t1->C[i][j] = c*t1->C[i][j] + cc*t2->C[i][j];
+  }
+
+  /* update sigma */
+  t1->sigma = pow(t1->sigma,c)*pow(t2->sigma,cc);
+
+  mm_cmaes_free_village(t,iv2);
 }
 
 static void mm_cmaes_allowSplit(mm_cmaes_t *t, char b)
@@ -470,6 +526,7 @@ void mm_cmaes_free_village(mm_cmaes_t* t, int i){
     //free((double**)t->pop[i]);
     t->villages[i]=NULL;
     t->nb_villages--;
+    mm_cmaes_allowSplit(t,1);
   }
 }
 
@@ -3534,7 +3591,7 @@ cmaes_readpara_SupplementDefaults(cmaes_readpara_t *t)
     t->updateCmode.maxtime = 0.20; /* maximal 20% of CPU-time */
 
   if(t->divisionThreshold <= 0)
-    t->divisionThreshold = .25;
+    t->divisionThreshold = 1;
 
   t->flgsupplemented = 1;
 

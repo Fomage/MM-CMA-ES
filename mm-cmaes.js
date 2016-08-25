@@ -1,5 +1,7 @@
 var cmaesFunction = function () { console.log("Warning: no function installed") }
 
+var cmaesDefined
+
 var cmaesXMean
 
 var cmaesEigenVectors
@@ -22,6 +24,7 @@ var colours = [["blue","violet"],["red","orange"],["green","teal"],["yellow","br
 
 function cmaesPushStep() {
     cmaesSteps.push({
+		defined: cmaesDefined,
         points: cmaesPoints,
         xmean: cmaesXMean,
         eigenVectors: cmaesEigenVectors,
@@ -135,7 +138,7 @@ window.onload = function() {
         var step = cmaesSteps[slider.valueAsNumber]
         if (step) {
 			var pointRank=0;
-			for(ivillage=0;ivillage<step.xmean.length;ivillage++){
+			for(ivillage=0;ivillage<step.xmean.length;ivillage++){if(step.defined[ivillage]){
 				step.points[ivillage].forEach(function (planPoint) {//draws distribution
 					var canvasPoint = canvasOfPlan([planPoint[0],planPoint[1]])
 					var radius = 2
@@ -233,7 +236,7 @@ window.onload = function() {
 				ctx.ellipse(canvasXmean[0], canvasXmean[1], rx, ry, -angle, 0, 2 * Math.PI, false)
 				ctx.strokeStyle = colours[ivillage][1]
 				ctx.stroke()
-			}
+			}}
             
         }
     }

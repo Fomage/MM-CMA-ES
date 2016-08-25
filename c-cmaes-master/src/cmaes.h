@@ -191,6 +191,9 @@ typedef struct
   /* parameters */
   int max_villages;
   int recoveryTimeAfterSplit;
+  int tooYoungToMerge;
+  double fusionThreshold;
+  double fusionFactor;
 
   /*internal variables */
   int nb_villages;
