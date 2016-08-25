@@ -98,7 +98,7 @@ int main(int argn, char **args)
 	/* Optimize function */
     printf("Begin optimization.\n");
     while(!evo.stahp){
-	  mm_cmaes_run(&evo,rgpFun[nb]);
+	  mm_cmaes_run(&evo,rgpFun[nb],1);
     }
 
 	printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",

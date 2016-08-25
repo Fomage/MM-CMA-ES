@@ -302,7 +302,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   //init t->xbestever
 }
 
-double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
+double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkative)
 {
   //printf("mm_cmaes_run() called.\n");
 
@@ -350,27 +350,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
         splitOccured=0;
         if(evo->shouldSplit){
           splitOccured=1;
-          /* test section */
-          char test=0;
-          for(i=0;i<evo->sp.mu;i++){
-            if(evo->sp.weights[i] != evo->other->sp.weights[i])
-              test=1;
-          }
-          if((evo->chiN != evo->other->chiN)
-             || (evo->sp.damps != evo->other->sp.damps)
-             || (evo->sp.cs != evo->other->sp.cs)
-             || test)
-            printf("WARNING DIFFERENCE SPOTTED\n");
 
-          int j;
-          double sum;
-          for(j=0;j<evo->sp.N;j++){
-            for(i=0,sum=0.;i<evo->sp.N;i++)
-              sum+=evo->other->B[i][j] * evo->other->B[i][j];
-            if((sum<.99999999) || (sum>1.00000001))
-              printf("Norm of B column %d in village %d is %f\n",j,ivillage,sum);
-          }
-          /* end test section */
           printf("\tSplit detected in village %d\n",ivillage);
           buffer[buffercount]=evo->other;
           buffercount++;
@@ -379,9 +359,6 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
             for(i=0;i<buffercount;i++)
               buffer[i]->canSplit=0;
           }
-        /*}else if((ivillage==1) && (evo->publicFitness[evo->index[0]] != evo->publicFitness[evo->index[evo->sp.lambda-1]])){
-          printf("Best/worst solution score in village 1 : %f/%f, lambda = %d\n",
-                 evo->publicFitness[evo->index[0]],evo->publicFitness[evo->index[evo->sp.lambda-1]],evo->sp.lambda);}*/
         }
 
         /* read control signals for output and termination */
@@ -391,32 +368,40 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *))
         if((stop = cmaes_TestForTermination(evo)) && (!splitOccured)){/* termination conditions are invalid right after a split*/
           t->countevals+=evo->countevals;
 
-          /* print something */
-          printf("Village %d has terminated.\n",ivillage);
-		  printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
-				cmaes_Get(evo, "gen"), cmaes_Get(evo, "eval"),
-				evo->eigenTimings.totaltime,
-				cmaes_Get(evo, "funval"));
-		  printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
-				cmaes_Get(evo, "maxaxislen") / cmaes_Get(evo, "minaxislen"),
-				cmaes_Get(evo, "maxstddev"), cmaes_Get(evo, "minstddev"));
-		  printf("Stop :\n%s\n", cmaes_TestForTermination(evo));
+          /* talk ? */
+          if(talkative){
+            /* check if stillborn */
+            if(evo->gen > 1){
+              /* print something */
+              printf("Village %d has terminated.\n",ivillage);
+              printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
+                    cmaes_Get(evo, "gen"), cmaes_Get(evo, "eval"),
+                    evo->eigenTimings.totaltime,
+                    cmaes_Get(evo, "funval"));
+              printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
+                    cmaes_Get(evo, "maxaxislen") / cmaes_Get(evo, "minaxislen"),
+                    cmaes_Get(evo, "maxstddev"), cmaes_Get(evo, "minstddev"));
+              printf("Stop :\n%s\n", cmaes_TestForTermination(evo));
 
-		  /* write some data */
-		  cmaes_WriteToFile(evo, "all", "allcmaes.dat");
+              /* write some data */
+              cmaes_WriteToFile(evo, "all", "allcmaes.dat");
 
-		  /* keep best ever solution */
-		  if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
-			t->fbestever = cmaes_Get(evo, "fbestever");
-			t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
-			printf("Village %d did %.5e !\n",ivillage,t->fbestever);
-		  }
-		  /* best estimator for the optimum is xmean, therefore check */
-		  //printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
-		  if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
-			t->fbestever = fmean;
-			t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
-		  }
+              /* keep best ever solution */
+              if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
+                t->fbestever = cmaes_Get(evo, "fbestever");
+                t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
+                printf("Village %d did %.5e !\n",ivillage,t->fbestever);
+              }
+              /* best estimator for the optimum is xmean, therefore check */
+              //printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
+              if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
+                t->fbestever = fmean;
+                t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
+              }
+            }else{/* if stillborn */
+              printf("Village %d was stillborn.\n",ivillage);
+            }
+          }/* if(talkative) */
 
 		  mm_cmaes_free_village(t,ivillage);
 
@@ -1346,7 +1331,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
 {
   int i, j, k, iNk, hsig, N=t->sp.N;
   int flgdiag = ((t->sp.diagonalCov == 1) || (t->sp.diagonalCov >= t->gen));
-  double sum,sum2;
+  double sum,sum2,temp;
   double psxps, psxps2;
 
   if(t->state == 3)
@@ -1407,8 +1392,10 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
     for(i=0;i<mud;i++){
       for(j=i+1;j<mud;j++){
         d=0;
-        for(k=0;k<N;k++)
-          d+=pow(fabs(t->rgrgx[t->index[i]][k]-t->rgrgx[t->index[j]][k]),2);
+        for(k=0;k<N;k++){
+          temp=t->rgrgx[t->index[i]][k]-t->rgrgx[t->index[j]][k];
+          d+=temp*temp;
+        }
         d=sqrt(d);
         if(d/(i+j+2) >= Sd){
           t->shouldSplit=1;

@@ -1,4 +1,4 @@
-villages 4
+villages 10
 function number 0  # the first number is read by example_restarts.c, see there.
 restarts 0 2                    # read by example_restarts.c, remark that restarts 
                               # with the same initialX might be sub-optimal

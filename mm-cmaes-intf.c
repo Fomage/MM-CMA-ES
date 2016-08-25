@@ -6,7 +6,7 @@
 mm_cmaes_t evo;
 
 void cmaesInitialize(void) {
-  double inxstart[] = {0, 0};
+  double inxstart[] = {0.5, 0.5};
   double inrgstddev[] = {0.5, 0.5};
   long int inseed = 0;
   int lambda = 0;
