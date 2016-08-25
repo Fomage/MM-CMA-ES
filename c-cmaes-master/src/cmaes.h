@@ -96,6 +96,7 @@ typedef struct
   double ccumcov;      /* <- N */
   double ccov;         /* <- mucov, <- N */
   double diagonalCov;  /* number of initial iterations */
+  double divisionThreshold;
   struct { int flgalways; double modulo; double maxtime; } updateCmode;
   double facupdateCmode;
 
@@ -130,7 +131,6 @@ struct cmaes_type
   double *arFuncValueHist;
   int *causeDivision;
   int *clusters;
-  double divisionThreshold;
 
   short flgIniphase; /* not really in use anymore */
   short flgStop;
@@ -180,6 +180,7 @@ struct cmaes_type
   short canSplit;
 
   struct cmaes_type* other;/* used in case of split */
+  int splitGen;
 };
 typedef struct cmaes_type cmaes_t;
 
@@ -187,7 +188,11 @@ typedef struct cmaes_type cmaes_t;
 typedef struct
 /* the MM-CMA-ES object, managing the different cmaes instances */
 {
+  /* parameters */
   int max_villages;
+  int recoveryTimeAfterSplit;
+
+  /*internal variables */
   int nb_villages;
 
   cmaes_t** villages;
