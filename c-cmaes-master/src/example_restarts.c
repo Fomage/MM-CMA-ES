@@ -9,6 +9,8 @@ typedef struct
 {
     int countevals;
     double fitness;
+    int nbSplits;
+    int nbMerges;
 } result;
 
 /* parameters type for performance analysis */
@@ -70,6 +72,8 @@ int main(int argn, char **args)
 	typedef double (*pfun_t)(double const *);
 	pfun_t rgpFun[99];  /* array (range) of pointer to objective function */
 	char *filename = "cmaes_initials.par"; /* input parameter file */
+	const char *s = "testOutput.dat";
+    FILE *fp;
 
 	int N,*scores,*witnessScore;
 	scores = (int*) calloc(N_MAX/N_STEP,sizeof(int));
@@ -78,6 +82,7 @@ int main(int argn, char **args)
     double *bestdt, *bestft;
     bestdt = (double*) calloc(N_MAX/N_STEP,sizeof(double));
     bestft = (double*) calloc(N_MAX/N_STEP,sizeof(double));
+    double *fitnesses = (double*) calloc(N_MAX/N_STEP,sizeof(double));
 
     double successThreshold = 1e-14;
 
@@ -107,47 +112,50 @@ int main(int argn, char **args)
 
     result r;
     parameters p;
+    p.fusionThreshold=0;
 
-    /* test on sphere for dt and ft against dimension */
+    /* test on sphere for ft against dimension */
     for(N=1;N<N_MAX/N_STEP;N++){
-        /*witness*/
         p.N = N*N_STEP;
-        p.max_villages = 1;
+        printf("DIMENSION INCREASE : %d\n",p.N);
+        /*witness*/
+        /*p.max_villages = 1;
+        p.fusionThreshold = 0;
         r = optimize(rgpFun[nb], p, filename);
         if(r.fitness < successThreshold)
             witnessScore[N]=r.countevals;
         else
             witnessScore[N]=-1;
-
+        */
+        p.divisionThreshold=.7*log(p.N*.7)+.4;
+        p.divisionThreshold/=2;
+        p.fusionThreshold = pow(0.044884364*p.N,3)*3.82774932 + 0.401943203;
+        //p.fusionThreshold*=2;
         scores[N] = -1;
-        p.max_villages = N*N_STEP;
-        for(dt=1./16.;dt<128;dt*=2.){
-            p.divisionThreshold=dt;
-            for(ft=1./16.;ft<128;ft*=2.){
-                printf("dt %f ft %f\n",dt,ft);
-                p.fusionThreshold=ft;
-                r = optimize(rgpFun[0],p,filename);
-                if((r.fitness < successThreshold) && (r.countevals < scores[N])){
-                    scores[N] = r.countevals;
-                    bestdt[N]=dt;
-                    bestft[N]=ft;
-                }
-            }
+        p.max_villages = 2;
+
+        r = optimize(rgpFun[nb],p,filename);
+
+        /*if((r.fitness < successThreshold) && ((r.countevals < scores[N])||(scores[N]==-1))){
+            scores[N] = r.countevals;
+            bestdt[N] = dt;
+            bestft[N] = ft;
+        }*/
+        fp = fopen( s, "a");
+        if(fp == NULL) {
+            printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
+            break;
         }
+        fprintf(fp, "Dimension %d : nbSplits=%d, nbMerge=%d\n",N*N_STEP,r.nbSplits, r.nbMerges);
+        fclose(fp);
 
     }
 
-    const char *s = "testOutput.dat";
-    FILE *fp;
-    fp = fopen( s, "wa");
-    if(fp == NULL) {
-        printf("cmaes_WriteToFile(): could not open '%s' with flag 'wa'\n", s);
-        return -1;
-    }
-    for(N=1;N<N_MAX/N_STEP;N++){
-        fprintf(fp, "Dimension %d : score %d, dt=%f, ft=%f\n",N*N_STEP,scores[N],bestdt[N],bestft[N]);
-    }
-    fclose(fp);
+    free(scores);
+    free(witnessScore);
+    free(bestdt);
+    free(bestft);
+    free(fitnesses);
 
 	return 0;
 
@@ -172,7 +180,8 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
                   0,
                   p.N, NULL, NULL, 0, 0, p.divisionThreshold, filename);
 
-    printf("Dimension %d, dt %.3e, ft %.3e\n",p.N,p.divisionThreshold,p.fusionThreshold);
+    printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
+    //printf("Supplemented : %d, dt : %f\n",evo.villages[0]->sp.flgsupplemented, evo.villages[0]->sp.divisionThreshold);
 
     while(!evo.stahp){
 	  mm_cmaes_run(&evo,pFun,0);
@@ -183,10 +192,12 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
 
     res.countevals = evo.countevals;
     res.fitness = evo.fbestever;
+    res.nbSplits = evo.nbSplits;
+    res.nbMerges = evo.nbMerges;
 
     mm_cmaes_exit(&evo);
 
-	return res; /* was dynamically allocated, should be freed in the end */
+	return res;
 }
 
 #if 1

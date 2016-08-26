@@ -195,15 +195,18 @@ typedef struct
   double fusionThreshold;
   double fusionFactor;
 
+  /* measures */
+  int countevals;
+  double fbestever;
+  double* xbestever;
+  int nbSplits;
+  int nbMerges;
+
   /*internal variables */
   int nb_villages;
 
   cmaes_t** villages;
   double*const** pop;
-
-  int countevals;
-  double fbestever;
-  double* xbestever;
 
   char stahp;
   char allowSplit;

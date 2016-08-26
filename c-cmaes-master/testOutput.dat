@@ -1,0 +1,40 @@
+Dimension 2 : fitness = 1.31976e-018, dt=0.500000
+Dimension 4 : fitness = 5.36501e-016, dt=1.000000
+Dimension 6 : fitness = 2.74822e-015, dt=1.000000
+Dimension 8 : fitness = 1.72475e-015, dt=1.000000
+Dimension 10 : fitness = 1.26667e-015, dt=1.000000
+Dimension 12 : fitness = 4.61776e-015, dt=1.000000
+Dimension 14 : fitness = 4.39534e-015, dt=1.000000
+Dimension 16 : fitness = 4.78951e-015, dt=1.000000
+Dimension 18 : fitness = 2.51857e-015, dt=1.000000
+Dimension 20 : fitness = 4.89366e-016, dt=2.000000
+Dimension 22 : fitness = 6.75772e-016, dt=2.000000
+Dimension 24 : fitness = 1.34252e-015, dt=2.000000
+Dimension 26 : fitness = 1.68470e-015, dt=2.000000
+Dimension 28 : fitness = 1.00561e-014, dt=2.000000
+Dimension 30 : fitness = 2.47449e-015, dt=2.000000
+Dimension 32 : fitness = 1.31302e-014, dt=2.000000
+Dimension 34 : fitness = 1.47605e-014, dt=2.000000
+Dimension 36 : fitness = 6.25185e-015, dt=2.000000
+Dimension 38 : fitness = 8.67460e-015, dt=2.000000
+
+Dimension 2 : ft=0.062500, nbSplits=18, nbMerge=13
+Dimension 4 : ft=0.062500, nbSplits=32, nbMerge=13
+Dimension 6 : ft=0.062500, nbSplits=19, nbMerge=2
+Dimension 8 : ft=0.250000, nbSplits=24, nbMerge=3
+Dimension 10 : ft=0.500000, nbSplits=32, nbMerge=3
+Dimension 12 : ft=1.000000, nbSplits=23, nbMerge=5
+Dimension 14 : ft=1.000000, nbSplits=43, nbMerge=2
+Dimension 16 : ft=1.000000, nbSplits=21, nbMerge=1
+Dimension 18 : ft=2.000000, nbSplits=40, nbMerge=7
+Dimension 20 : ft=2.000000, nbSplits=40, nbMerge=2
+Dimension 22 : ft=4.000000, nbSplits=47, nbMerge=10
+Dimension 24 : ft=4.000000, nbSplits=51, nbMerge=4
+Dimension 26 : ft=4.000000, nbSplits=32, nbMerge=1
+Dimension 28 : ft=8.000000, nbSplits=66, nbMerge=12
+Dimension 30 : ft=8.000000, nbSplits=49, nbMerge=13
+Dimension 32 : ft=8.000000, nbSplits=24, nbMerge=6
+Dimension 34 : ft=8.000000, nbSplits=25, nbMerge=2
+Dimension 36 : ft=8.000000, nbSplits=58, nbMerge=1
+Dimension 38 : ft=16.000000, nbSplits=82, nbMerge=23
+

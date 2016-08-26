@@ -275,20 +275,6 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     printf("mm_cmaes_init(): could not open %s to read villages number\n", input_parameter_filename);
     nb = max_villages;
   }
-  t->recoveryTimeAfterSplit = recoveryTimeAfterSplit;
-  t->tooYoungToMerge = tooYoungToMerge;
-  t->fusionThreshold = fusionThreshold;
-  t->fusionFactor = fusionFactor;
-
-  /*supplement defaults */
-  if(t->recoveryTimeAfterSplit <= 0)
-    t->recoveryTimeAfterSplit = 10;
-  if(t->tooYoungToMerge <= 0)
-    t->tooYoungToMerge = 10;
-  if(t->fusionThreshold <= 0)
-    t->fusionThreshold = .1;
-  if(t->fusionFactor <= 0)
-    t->fusionFactor = .5;
 
   if(nb<=0)
     t->max_villages = 1;
@@ -301,6 +287,8 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->countevals=0;
   t->fbestever=0;
   t->xbestever=NULL;
+  t->nbSplits=0;
+  t->nbMerges=0;
 
   t->villages[0] = (cmaes_t*) malloc(sizeof(cmaes_t));
   cmaes_init(t->villages[0],
@@ -309,6 +297,21 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
                 input_parameter_filename);
   for(i=1;i<t->max_villages;i++)
     t->villages[i]=NULL;
+
+
+  t->recoveryTimeAfterSplit = recoveryTimeAfterSplit;
+  t->tooYoungToMerge = tooYoungToMerge;
+  t->fusionThreshold = fusionThreshold;
+  t->fusionFactor = fusionFactor;
+  /*supplement defaults */
+  if(t->recoveryTimeAfterSplit <= 0)
+    t->recoveryTimeAfterSplit = 10;
+  if(t->tooYoungToMerge <= 0)
+    t->tooYoungToMerge = 10;
+  if(t->fusionThreshold <= 0)
+    t->fusionThreshold = pow(0.044884364*t->villages[0]->sp.N,3)*3.82774932 + 0.401943203;
+  if(t->fusionFactor <= 0)
+    t->fusionFactor = .5;
 
   t->stahp=0;
   t->allowSplit = (t->max_villages>t->nb_villages);
@@ -364,6 +367,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
         splitOccured=0;
         if(evo->shouldSplit){
           splitOccured=1;
+          t->nbSplits++;
 
           if(talkative)
             printf("\tSplit detected in village %d\n",ivillage);
@@ -401,22 +405,25 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
               /* write some data */
               cmaes_WriteToFile(evo, "all", "allcmaes.dat");
 
-              /* keep best ever solution */
-              if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
-                t->fbestever = cmaes_Get(evo, "fbestever");
-                t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
-                printf("Village %d did %.5e !\n",ivillage,t->fbestever);
-              }
-              /* best estimator for the optimum is xmean, therefore check */
-              //printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
-              if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
-                t->fbestever = fmean;
-                t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
-              }
             }else{/* if stillborn */
               printf("Village %d was stillborn.\n",ivillage);
+              t->nbSplits--;/* we don't count stillborns for now */
             }
           }/* if(talkative) */
+
+          /* keep best ever solution */
+          if (t->xbestever == NULL || cmaes_Get(evo, "fbestever") < t->fbestever) {
+            t->fbestever = cmaes_Get(evo, "fbestever");
+            t->xbestever = cmaes_GetInto(evo, "xbestever", t->xbestever); /* alloc mem if needed */
+            if(talkative)
+              printf("Village %d did %.5e !\n",ivillage,t->fbestever);
+          }
+          /* best estimator for the optimum is xmean, therefore check */
+          //printf("xmean dim : %d\n",(int)cmaes_GetPtr(evo,"xmean")[-1]);
+          if ((fmean = (*pFun)(cmaes_GetPtr(evo, "xmean"))) < t->fbestever) {
+            t->fbestever = fmean;
+            t->xbestever = cmaes_GetInto(evo, "xmean", t->xbestever);
+          }
 
 		  mm_cmaes_free_village(t,ivillage);
 
@@ -446,6 +453,7 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
       if(mm_cmaes_checkFusion(t,j,i)){
         if(talkative)
           printf("Merging villages %d and %d\n",j,i);
+        t->nbMerges++;
         mm_cmaes_mergeVillages(t,i,j);
       }
     }
@@ -3230,7 +3238,6 @@ cmaes_readpara_init (cmaes_readpara_t *t,
                double dt,
                const char * filename)
 {
-  printf("Readpara init called.\n");
   int i, N;
   /* TODO: make sure cmaes_readpara_init has not been called already */
   t->filename = NULL; /* set after successful Read */
@@ -3598,7 +3605,7 @@ cmaes_readpara_SupplementDefaults(cmaes_readpara_t *t)
     t->updateCmode.maxtime = 0.20; /* maximal 20% of CPU-time */
 
   if(t->divisionThreshold <= 0)
-    t->divisionThreshold = 1;
+    t->divisionThreshold = .7*log(N*.7)+.4;
 
   t->flgsupplemented = 1;
 
