@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stddef.h> /* NULL */
+#include <time.h>
 #include "cmaes_interface.h"
 /* result type for performances analysis */
 typedef struct
@@ -75,7 +76,7 @@ int main(int argn, char **args)
 	const char *s = "testOutput.dat";
     FILE *fp;
 
-	int N,*scores,*witnessScore;
+	int i,N,*scores,*witnessScore;
 	scores = (int*) calloc(N_MAX/N_STEP,sizeof(int));
 	witnessScore = (int*) calloc(N_MAX/N_STEP,sizeof(int));
 	double dt,ft;
@@ -108,16 +109,16 @@ int main(int argn, char **args)
 	rgpFun[24] = f_rastrigin;
 	//int maxnb = 24;
 
-    int nb=0;
+    int nb=5;
 
     result r;
     parameters p;
     p.fusionThreshold=0;
+    p.divisionThreshold=0;
+    p.N = 22;
 
     /* test on sphere for ft against dimension */
-    for(N=1;N<N_MAX/N_STEP;N++){
-        p.N = N*N_STEP;
-        printf("DIMENSION INCREASE : %d\n",p.N);
+    for(p.max_villages=1;p.max_villages<11;p.max_villages++){
         /*witness*/
         /*p.max_villages = 1;
         p.fusionThreshold = 0;
@@ -127,15 +128,13 @@ int main(int argn, char **args)
         else
             witnessScore[N]=-1;
         */
-        p.divisionThreshold=.7*log(p.N*.7)+.4;
-        p.divisionThreshold/=2;
-        p.fusionThreshold = pow(0.044884364*p.N,3)*3.82774932 + 0.401943203;
         //p.fusionThreshold*=2;
-        scores[N] = -1;
-        p.max_villages = 2;
 
-        r = optimize(rgpFun[nb],p,filename);
-
+        clock_t begin = clock();
+        for(i=0;i<10;i++)
+            r = optimize(rgpFun[nb],p,filename);
+        clock_t end = clock();
+        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
         /*if((r.fitness < successThreshold) && ((r.countevals < scores[N])||(scores[N]==-1))){
             scores[N] = r.countevals;
             bestdt[N] = dt;
@@ -146,7 +145,7 @@ int main(int argn, char **args)
             printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
             break;
         }
-        fprintf(fp, "Dimension %d : nbSplits=%d, nbMerge=%d\n",N*N_STEP,r.nbSplits, r.nbMerges);
+        fprintf(fp, "max_village : %d, time : %f\n",p.max_villages,time_spent);
         fclose(fp);
 
     }
@@ -180,7 +179,7 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
                   0,
                   p.N, NULL, NULL, 0, 0, p.divisionThreshold, filename);
 
-    printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
+    //printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
     //printf("Supplemented : %d, dt : %f\n",evo.villages[0]->sp.flgsupplemented, evo.villages[0]->sp.divisionThreshold);
 
     while(!evo.stahp){

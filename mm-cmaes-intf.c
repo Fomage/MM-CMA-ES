@@ -10,7 +10,17 @@ void cmaesInitialize(void) {
   double inrgstddev[] = {0.5, 0.5};
   long int inseed = 0;
   int lambda = 0;
-  mm_cmaes_init(&evo, 4, 2, inxstart, inrgstddev, inseed, lambda, NULL);
+  /*mm_cmaes_t* t, int max_villages,
+                   int recoveryTimeAfterSplit,
+                   int tooYoungToMerge,
+                   double fusionThreshold,
+                   double fusionFactor,
+                   int dimension,
+                   double *xstart, double *stddev, long seed, int lambda, double dt,
+                   const char *input_parameter_filename);*/
+  mm_cmaes_init(&evo, 4,
+					0,0,0,0,
+					2, inxstart, inrgstddev, inseed, lambda, 0, NULL);
 }
 
 double fitness;
@@ -40,7 +50,7 @@ bool cmaesStep() {
   const double *rgD;
   int i,ivillage;
 
-  mm_cmaes_run(&evo,&cmaesTargetFunc);
+  mm_cmaes_run(&evo,&cmaesTargetFunc, 0);
   
   EM_ASM(cmaesDefined = []);
   EM_ASM(cmaesXMean = []);

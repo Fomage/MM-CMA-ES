@@ -348,16 +348,11 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
         for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
           evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
 
-        /* prevent newborn villages from spawning any more */
-        if(evo->gen <= t->recoveryTimeAfterSplit){
+        if((evo->gen <= t->recoveryTimeAfterSplit)||/* prevent newborn villages from spawning any more */
+          (evo->gen - evo->splitGen <= t->recoveryTimeAfterSplit)||/* prevent recent parents from immediately spawning again */
+          (cmaes_TestForTermination(evo)) )/* prevents chain death spawn ? Doesn't seem to be working*/
           evo->canSplit = 0;
-        }else if(evo->gen - evo->splitGen <= t->recoveryTimeAfterSplit){
-          /* prevent recent parents from immediately spawning again */
-          evo->canSplit = 0;
-        }else if(cmaes_TestForTermination(evo)){
-          /* prevents chain death spawn ? Doesn't seem to be working*/
-          evo->canSplit = 0;
-        }else
+        else
           evo->canSplit = t->allowSplit;
 
         /* update search distribution */
