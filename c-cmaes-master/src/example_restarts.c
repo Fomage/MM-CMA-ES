@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stddef.h> /* NULL */
+#include <pthread.h>
 #include "cmaes_interface.h"
 /* result type for performances analysis */
 typedef struct
@@ -21,6 +22,16 @@ typedef struct
     double divisionThreshold;
     double fusionThreshold;
 } parameters;
+
+/* argument for the thread functions */
+#define MAX_THREADS 8
+typedef struct
+{
+	char *used;
+	result *m_result;
+	parameters *m_parameters;
+	pthread_mutex_t *used_mutex,*console_mutex;
+} threadArgument;
 
 /*___________________________________________________________________________
  *
@@ -53,13 +64,15 @@ result optimize(double(*pFun)(double const *),
 		char *input_parameter_filename);
 void writeResults();
 
+void threadMain(void* arg);
+
 extern void   cmaes_random_init( cmaes_random_t *, long unsigned seed /*=0=clock*/);
 extern void   cmaes_random_exit( cmaes_random_t *);
 extern double cmaes_random_Gauss( cmaes_random_t *); /* (0,1)-normally distributed */
 
 
 #define N_MAX 40
-#define N_STEP 2
+#define N_STEP 1
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
@@ -110,38 +123,34 @@ int main(int argn, char **args)
 
     int nb=0;
 
-    result r;
-    parameters p;
-    p.fusionThreshold=0;
+	/* specify jobs to do, i.e every optimize() call to do */
+	#define NB_JOBS 8
+	parameters *jobsParameters = (parameters*) calloc(NB_JOBS,sizeof(parameters));
+	result *jobsResults = (result*) calloc(NB_JOBS,sizeof(result));
+	char* used = (char*) calloc(NB_JOBS,sizeof(char));
 
-    /* test on sphere for ft against dimension */
-    for(N=1;N<N_MAX/N_STEP;N++){
-        p.N = N*N_STEP;
-        printf("DIMENSION INCREASE : %d\n",p.N);
-        /*witness*/
-        /*p.max_villages = 1;
-        p.fusionThreshold = 0;
-        r = optimize(rgpFun[nb], p, filename);
-        if(r.fitness < successThreshold)
-            witnessScore[N]=r.countevals;
-        else
-            witnessScore[N]=-1;
-        */
-        p.divisionThreshold=.7*log(p.N*.7)+.4;
-        p.divisionThreshold/=2;
-        p.fusionThreshold = pow(0.044884364*p.N,3)*3.82774932 + 0.401943203;
-        //p.fusionThreshold*=2;
-        scores[N] = -1;
-        p.max_villages = 2;
+	for(i=0;i<NB_JOBS;i++){
+		jobsParameters[i].N=i+2;
+		jobsParameters[i].max_villages=i+2;
+		jobsParameters[i].fusionThreshold=0;
+	}
 
-        r = optimize(rgpFun[nb],p,filename);
+	pthread_mutex_t usedMutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_init(&usedMutex,NULL);
+	pthread_mutex_t consoleMutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_init(&consoleMutex,NULL);
 
-        /*if((r.fitness < successThreshold) && ((r.countevals < scores[N])||(scores[N]==-1))){
-            scores[N] = r.countevals;
-            bestdt[N] = dt;
-            bestft[N] = ft;
-        }*/
-        fp = fopen( s, "a");
+    /* launch the threads */
+	pthread_t thr[MAX_THREADS];
+    for(i=1;i<MAX_THREADS;i++){
+		threadArgument theArg;
+		theArg.
+        if(pthread_create(&thr[i],NULL,threadMain,&
+	}
+
+	/* write results */
+	for(i=0;i<NB_JOBS;i++){
+		fp = fopen( s, "a");
         if(fp == NULL) {
             printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
             break;
@@ -160,6 +169,13 @@ int main(int argn, char **args)
 	return 0;
 
 } /* main() */
+
+void threadMain(void* arg)
+{
+	threadArgument* a = (threadArgument*) arg;
+
+}
+
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
