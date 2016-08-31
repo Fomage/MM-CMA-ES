@@ -27,6 +27,8 @@ typedef struct
 #define MAX_THREADS 8
 typedef struct
 {
+	double (*pfun)(double const *);
+	char *filename;
 	char *used;
 	result *m_result;
 	parameters *m_parameters;
@@ -64,7 +66,7 @@ result optimize(double(*pFun)(double const *),
 		char *input_parameter_filename);
 void writeResults();
 
-void threadMain(void* arg);
+void *threadMain(void* arg);
 
 extern void   cmaes_random_init( cmaes_random_t *, long unsigned seed /*=0=clock*/);
 extern void   cmaes_random_exit( cmaes_random_t *);
@@ -73,6 +75,7 @@ extern double cmaes_random_Gauss( cmaes_random_t *); /* (0,1)-normally distribut
 
 #define N_MAX 40
 #define N_STEP 1
+#define SUCCESS_THRESHOLD 1e-13
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
@@ -88,16 +91,7 @@ int main(int argn, char **args)
 	const char *s = "testOutput.dat";
     FILE *fp;
 
-	int N,*scores,*witnessScore;
-	scores = (int*) calloc(N_MAX/N_STEP,sizeof(int));
-	witnessScore = (int*) calloc(N_MAX/N_STEP,sizeof(int));
-	double dt,ft;
-    double *bestdt, *bestft;
-    bestdt = (double*) calloc(N_MAX/N_STEP,sizeof(double));
-    bestft = (double*) calloc(N_MAX/N_STEP,sizeof(double));
-    double *fitnesses = (double*) calloc(N_MAX/N_STEP,sizeof(double));
-
-    double successThreshold = 1e-14;
+	int i,N;
 
 	/* Put together objective functions */
 	rgpFun[0] = f_sphere;
@@ -144,36 +138,90 @@ int main(int argn, char **args)
 	pthread_t thr[MAX_THREADS];
     for(i=1;i<MAX_THREADS;i++){
 		threadArgument theArg;
-		theArg.
-        if(pthread_create(&thr[i],NULL,threadMain,&
+		theArg.pfun = rgpFun[nb];
+		theArg.filename = filename;
+		theArg.used = used;
+		theArg.m_result = jobsResults;
+		theArg.m_parameters = jobsParameters;
+		theArg.used_mutex = &usedMutex;
+		theArg.console_mutex = &consoleMutex;
+        if(pthread_create(&thr[i],NULL,threadMain,&theArg)){
+			printf("Error creating thread %d\n",i);
+			return -1;
+		}
+	}
+
+	/* do the job on this thread too */
+	threadArgument theArg;
+	theArg.pfun = rgpFun[nb];
+	theArg.filename = filename;
+	theArg.used = used;
+	theArg.m_result = jobsResults;
+	theArg.m_parameters = jobsParameters;
+	theArg.used_mutex = &usedMutex;
+	theArg.console_mutex = &consoleMutex;
+	threadMain(&theArg);
+
+	/* wait for other threads */
+	for(i=1;i<MAX_THREADS;i++){
+		pthread_join(thr[i],NULL);
 	}
 
 	/* write results */
-	for(i=0;i<NB_JOBS;i++){
-		fp = fopen( s, "a");
-        if(fp == NULL) {
-            printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
-            break;
-        }
-        fprintf(fp, "Dimension %d : nbSplits=%d, nbMerge=%d\n",N*N_STEP,r.nbSplits, r.nbMerges);
-        fclose(fp);
-
+	fp = fopen( s, "a");
+    if(fp == NULL) {
+        printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
+        return -2;
     }
+	for(i=0;i<NB_JOBS;i++){
+        fprintf(fp, "Dimension %d : counteval %d, divisionThreshold %.10e\n",
+			jobsParameters[i].N,jobsResults[i].countevals,jobsParameters[i].divisionThreshold);
+    }
+    fclose(fp);
 
-    free(scores);
-    free(witnessScore);
-    free(bestdt);
-    free(bestft);
-    free(fitnesses);
+	/* clean up */
+	free(jobsParameters);
+	free(jobsResults);
+	free(used);
+	pthread_mutex_destroy(&usedMutex);
+	pthread_mutex_destroy(&consoleMutex);
 
 	return 0;
 
 } /* main() */
 
-void threadMain(void* arg)
+void *threadMain(void* arg)
 {
 	threadArgument* a = (threadArgument*) arg;
+	double dt,bestdt;
+	result r;
+	int i,job;
 
+	/* search a job to do */
+	for(job=0;job<NB_JOBS;job++){
+		pthread_mutex_lock(a->used_mutex);
+		if(a->used[job])
+			pthread_mutex_unlock(a->used_mutex);
+		else{
+			a->used[job]=1;
+			pthread_mutex_unlock(a->used_mutex);
+			pthread_mutex_lock(a->console_mutex);
+			printf("Begining job %d\n",job);
+			pthread_mutex_unlock(a->console_mutex);
+			/* begin parameter search */
+			a->m_result[job].countevals=0;
+			for(dt=.4;dt<4.;dt*=1.4){
+				a->m_parameters[job].divisionThreshold=dt;
+				r = optimize(a->pfun,a->m_parameters[job],a->filename);
+				if((r.fitness < SUCCESS_THRESHOLD) &&
+					((r.countevals < a->m_result[job].countevals) || (a->m_result[job].countevals == 0))){
+					bestdt=dt;
+					a->m_result[job]=r;
+				}
+			}
+			a->m_parameters[job].divisionThreshold = bestdt;
+		}
+	}
 }
 
 
@@ -196,15 +244,15 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
                   0,
                   p.N, NULL, NULL, 0, 0, p.divisionThreshold, filename);
 
-    printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
+    //printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
     //printf("Supplemented : %d, dt : %f\n",evo.villages[0]->sp.flgsupplemented, evo.villages[0]->sp.divisionThreshold);
 
     while(!evo.stahp){
 	  mm_cmaes_run(&evo,pFun,0);
     }
 
-    printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
-        evo.countevals, evo.fbestever);
+    /*printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
+        evo.countevals, evo.fbestever);*/
 
     res.countevals = evo.countevals;
     res.fitness = evo.fbestever;
