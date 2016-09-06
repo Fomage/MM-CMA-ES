@@ -30,16 +30,16 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
                    double fusionThreshold,
                    double fusionFactor,
                    int dimension,
-                   double *xstart, double *stddev, long seed, int lambda, double dt,
+                   double *xstart, double *stddev, long seed, int lambda, double dt, double cdiv, int mud,
                    const char *input_parameter_filename);
 double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkative);
 void mm_cmaes_exit(mm_cmaes_t* t);
 
 double * cmaes_init(cmaes_t *, int dimension , double *xstart,
-		double *stddev, long seed, int lambda, double dt,
+		double *stddev, long seed, int lambda, double dt, double cdiv, int mud,
 		const char *input_parameter_filename);
 void cmaes_init_para(cmaes_t *, int dimension , double *xstart,
-		double *stddev, long seed, int lambda, double dt,
+		double *stddev, long seed, int lambda, double dt, double cdiv, int mud,
 		const char *input_parameter_filename);
 double * cmaes_init_final(cmaes_t *);
 void cmaes_resume_distribution(cmaes_t *evo_ptr, char *filename);

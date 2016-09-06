@@ -97,6 +97,8 @@ typedef struct
   double ccov;         /* <- mucov, <- N */
   double diagonalCov;  /* number of initial iterations */
   double divisionThreshold;
+  double cdiv;
+  int mud;
   struct { int flgalways; double modulo; double maxtime; } updateCmode;
   double facupdateCmode;
 

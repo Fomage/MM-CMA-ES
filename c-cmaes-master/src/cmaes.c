@@ -177,7 +177,8 @@ void   cmaes_timings_tic(cmaes_timings_t *timing);
 double cmaes_timings_toc(cmaes_timings_t *timing);
 
 void cmaes_readpara_init (cmaes_readpara_t *, int dim, const double * xstart,
-                    const double * sigma, int seed, int lambda, double dt,
+                    const double * sigma, int seed, int lambda, double dt, double cdiv,
+                    int mud,
                     const char * filename);
 void cmaes_readpara_exit(cmaes_readpara_t *);
 void cmaes_readpara_ReadFromFile(cmaes_readpara_t *, const char *szFileName);
@@ -258,7 +259,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
                    double fusionThreshold,
                    double fusionFactor,
                    int dimension,
-                   double *xstart, double *stddev, long seed, int lambda, double dt,
+                   double *xstart, double *stddev, long seed, int lambda, double dt, double cdiv, int mud,
                    const char *input_parameter_filename)
 {
   int i, nb=max_villages;
@@ -293,7 +294,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->villages[0] = (cmaes_t*) malloc(sizeof(cmaes_t));
   cmaes_init(t->villages[0],
                 dimension,xstart,
-                stddev,seed,lambda, dt,
+                stddev,seed,lambda, dt, cdiv, mud,
                 input_parameter_filename);
   for(i=1;i<t->max_villages;i++)
     t->villages[i]=NULL;
@@ -304,9 +305,9 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->fusionThreshold = fusionThreshold;
   t->fusionFactor = fusionFactor;
   /*supplement defaults */
-  if(t->recoveryTimeAfterSplit <= 0)
+  if(t->recoveryTimeAfterSplit < 0)
     t->recoveryTimeAfterSplit = 10;
-  if(t->tooYoungToMerge <= 0)
+  if(t->tooYoungToMerge < 0)
     t->tooYoungToMerge = 10;
   if(t->fusionThreshold <= 0)
     t->fusionThreshold = pow(0.044884364*t->villages[0]->sp.N,3)*3.82774932 + 0.401943203;
@@ -585,11 +586,13 @@ cmaes_init_para(cmaes_t *t, /* "this" */
                 long int inseed,
                 int lambda,
                 double dt,
+                double cdiv,
+                int mud,
                 const char *input_parameter_filename)
 {
   t->version = c_cmaes_version;
   cmaes_readpara_init(&t->sp, dimension, inxstart, inrgstddev, inseed,
-                   lambda, dt, input_parameter_filename);
+                   lambda, dt, cdiv, mud, input_parameter_filename);
 }
 
 double *
@@ -736,10 +739,12 @@ cmaes_init(cmaes_t *t, /* "this" */
                 long int inseed,
                 int lambda,
                 double dt,
+                double cdiv,
+                int mud,
                 const char *input_parameter_filename)
 {
   cmaes_init_para(t, dimension, inxstart, inrgstddev, inseed,
-                   lambda, dt, input_parameter_filename);
+                   lambda, dt, cdiv, mud, input_parameter_filename);
   return cmaes_init_final(t);
 }
 
@@ -875,6 +880,7 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->flgNoRandom = source->flgNoRandom;
   t->lambda = source->lambda;
   t->mu = source->mu;
+  t->mud = source->mud;
   t->weigkey = (char *)new_void(99, sizeof(char));
   strcpy(t->weigkey, source->weigkey);
   t->cs = source->cs;
@@ -883,6 +889,7 @@ void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
   t->mucov = source->mucov;
   t->mueff = source->mueff;
   t->ccov = source->ccov;
+  t->cdiv = source->cdiv;
   t->diagonalCov = source->diagonalCov;
   t->divisionThreshold = source->divisionThreshold;
   t->updateCmode.modulo = source->updateCmode.modulo;
@@ -3236,6 +3243,8 @@ cmaes_readpara_init (cmaes_readpara_t *t,
                int inseed,
                int lambda,
                double dt,
+               double cdiv,
+               int mud,
                const char * filename)
 {
   int i, N;
@@ -3252,6 +3261,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
   t->rgsformat[i] = " N %d";        t->rgpadr[i++] = (void *) &t->N;
   t->rgsformat[i] = " seed %d";    t->rgpadr[i++] = (void *) &t->seed;
   t->rgsformat[i] = " divisionThreshold %lg"; t->rgpadr[i++]=(void *) &t->divisionThreshold;
+  t->rgsformat[i] = " cdiv %lg"; t->rgpadr[i++]=(void *) &t->cdiv;
   t->rgsformat[i] = " stopMaxFunEvals %lg"; t->rgpadr[i++] = (void *) &t->stopMaxFunEvals;
   t->rgsformat[i] = " stopMaxIter %lg"; t->rgpadr[i++] = (void *) &t->stopMaxIter;
   t->rgsformat[i] = " stopFitness %lg"; t->rgpadr[i++]=(void *) &t->stStopFitness.val;
@@ -3262,6 +3272,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
   t->rgsformat[i] = " noRandom %d";      t->rgpadr[i++] = (void *) &t->flgNoRandom;
   t->rgsformat[i] = " lambda %d";      t->rgpadr[i++] = (void *) &t->lambda;
   t->rgsformat[i] = " mu %d";          t->rgpadr[i++] = (void *) &t->mu;
+  t->rgsformat[i] = " mud %d";          t->rgpadr[i++] = (void *) &t->mud;
   t->rgsformat[i] = " weights %5s";    t->rgpadr[i++] = (void *) t->weigkey;
   t->rgsformat[i] = " fac*cs %lg";t->rgpadr[i++] = (void *) &t->cs;
   t->rgsformat[i] = " fac*damps %lg";   t->rgpadr[i++] = (void *) &t->damps;
@@ -3311,6 +3322,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
     t->lambda = lambda;
   }
   t->mu = -1;
+  t->mud = mud;
   t->mucov = -1;
   t->weights = NULL;
   strcpy(t->weigkey, "log");
@@ -3319,6 +3331,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
   t->ccumcov = -1;
   t->damps = -1;
   t->ccov = -1;
+  t->cdiv = cdiv;
 
   t->diagonalCov = 0; /* default is 0, but this might change in future, see below */
 
@@ -3556,6 +3569,9 @@ cmaes_readpara_SupplementDefaults(cmaes_readpara_t *t)
     t->mu = t->lambda/2;
     cmaes_readpara_SetWeights(t, t->weigkey);
   }
+  if (t->mud == -1) {
+    t->mud = (int)douMax(2,ceil(t->lambda/4.));
+  }
   if (t->weights == NULL)
     cmaes_readpara_SetWeights(t, t->weigkey);
 
@@ -3578,6 +3594,8 @@ cmaes_readpara_SupplementDefaults(cmaes_readpara_t *t)
     t->ccov *= t2;
   if (t->ccov < 0 || t->ccov > 1) /* set default in case */
     t->ccov = t2;
+  if (t->cdiv < 0)
+    t->cdiv = t->ccumcov;
 
   if (t->diagonalCov == -1)
     t->diagonalCov = 2 + 100. * N / sqrt((double)t->lambda);
