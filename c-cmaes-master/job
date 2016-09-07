@@ -1,0 +1,11 @@
+#
+#!/bin/bash
+#
+#$ -cwd
+#$ -j y
+#$ -pe make 10 
+#
+
+./runnable
+
+
