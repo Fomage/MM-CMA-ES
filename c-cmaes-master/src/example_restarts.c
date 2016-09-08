@@ -29,13 +29,13 @@ typedef struct
 } parameters;
 
 /* argument for the thread functions */
-#define MAX_THREADS 10
+#define MAX_THREADS 2
 typedef struct
 {
 	char *filename;
 	char *used;
 	int *funNum;
-	(double (*pfun)(double const *))* funcs;
+	double (**funcs)(double const *);
 	result *m_result;
 	parameters *m_parameters;
 	pthread_mutex_t *used_mutex,*console_mutex;
@@ -88,6 +88,16 @@ extern double cmaes_random_Gauss( cmaes_random_t *); /* (0,1)-normally distribut
 #define DOING 2
 #define DONE 3
 
+/* global variables for threads */
+
+parameters jobsParameters[MAX_JOBS];// = (parameters*) calloc(MAX_JOBS,sizeof(parameters));
+result jobsResults[MAX_JOBS];// = (result*) calloc(MAX_JOBS,sizeof(result));
+int funNum[MAX_JOBS];// = (int*) calloc(MAX_JOBS,sizeof(int));
+char used[MAX_JOBS];// = (char*) calloc(MAX_JOBS,sizeof(char));
+int xnum[MAX_JOBS];// = (int*) calloc(MAX_JOBS,sizeof(int));
+
+pthread_mutex_t usedMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t consoleMutex = PTHREAD_MUTEX_INITIALIZER;
 /*___________________________________________________________________________
 //___________________________________________________________________________
 //
@@ -129,18 +139,18 @@ int main(int argn, char **args)
     int nb=0;
 
 	/* specify jobs to do, i.e every optimize() call to do */
-	parameters *jobsParameters = (parameters*) calloc(MAX_JOBS,sizeof(parameters));
+	/*parameters *jobsParameters = (parameters*) calloc(MAX_JOBS,sizeof(parameters));
 	result *jobsResults = (result*) calloc(MAX_JOBS,sizeof(result));
 	int* funNum = (int*) calloc(MAX_JOBS,sizeof(int));
 	char* used = (char*) calloc(MAX_JOBS,sizeof(char));
-	int* xnum = (int*) calloc(MAX_JOBS,sizeof(int));
+	int* xnum = (int*) calloc(MAX_JOBS,sizeof(int));*/
+
+	printf("Adress of used : %d\n",used);
 
 	for(i=0;i<MAX_JOBS;i++)
         used[i] = FREE;
 
-	pthread_mutex_t usedMutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutex_init(&usedMutex,NULL);
-	pthread_mutex_t consoleMutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutex_init(&consoleMutex,NULL);
 
 	/* prep output file */
@@ -149,7 +159,7 @@ int main(int argn, char **args)
         printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
         return -2;
     }
-    fprintf("\"N\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n")
+    fprintf(fp,"\"N\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n");
     fclose(fp);
 
     /* launch the threads */
@@ -170,6 +180,7 @@ int main(int argn, char **args)
 		}
 	}
 
+
     /* CMAES strategy */
     for(N=2;N<100;N++){
         cmaes_t evo;       /* the optimizer */
@@ -177,30 +188,37 @@ int main(int argn, char **args)
         double *fitvals;   /* objective function values of sampled population */
         double fbestever=0, *xbestever=NULL; /* store best solution */
         double fmean;
-        int j;
+        int j,
         lambda = 0;      /* offspring population size, 0 invokes default */
         char const * stop; /* stop message */
         char reroll,allfree;
 
+		printf("Starting CMAES strategy on dimension %d\n",N);
+
         double *xstart = (double*) calloc(7,sizeof(double));
         double *stddev = (double*) calloc(7,sizeof(double));
-        xstart[0]=0.7*ln(0.7*N)+0.4;stddev[0]=.75*xstart[0];//dt
+        xstart[0]=0.7*log(0.7*N)+0.4;stddev[0]=.75*xstart[0];//dt
         xstart[1]=0.000346*N*N*N+0.4;stddev[1]=.75*xstart[1];//ft
         xstart[2]=.5;stddev[2]=.25;//cdiv
         xstart[3]=10;stddev[3]=10;//recoveryTimeAfterSplit
         xstart[4]=2;stddev[4]=2;//tooYoungToSplit
-        xstart[5]=1+floor(.75*ln(N));stddev[5]=floor(.75*ln(N));//mud
+        xstart[5]=1+floor(.75*log(N));stddev[5]=floor(.75*log(N))>=1?floor(.75*log(N)):1;//mud
         xstart[6]=N+2;stddev[6]=N/2;//max_villages
 
+		printf("Initial search parameters defined.\n");
 		/* Parameters can be set in three ways. Here as input parameter
 		 * to cmaes_init, as value read from cmaes_initials.par in cmaes_readpara_init
 		 * during initialization, and as value read from cmaes_signals.par by
 		 * calling cmaes_ReadSignals explicitely.
+		 *
+		 * cmaes_t *, int dimension , double *xstart,
+		 * double *stddev, long seed, int lambda, double dt, double cdiv, int mud,
+		 * const char *input_parameter_filename)
 		 */
-		fitvals = cmaes_init(&evo, N, xstart, stddev, 0, lambda, 0, 0, 0, filename); /* allocs fitvals */
+		fitvals = cmaes_init(&evo, 7, xstart, stddev, time(NULL), lambda, 0., 0., -1, filename); /* allocs fitvals */
+		printf("cmaes_init done\n");
 		evo.canSplit = 0;
 		printf("%s\n", cmaes_SayHello(&evo));
-		evo.countevals = countevals; /* a hack, effects the output and termination */
 		cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* write initial values, headers in case */
 
 		while(!(stop=cmaes_TestForTermination(&evo)))
@@ -208,7 +226,7 @@ int main(int argn, char **args)
 			/* Generate population of new candidate solutions */
 			pop = cmaes_SamplePopulation(&evo); /* do not change content of pop */
 
-			/* Compute fitness value for each candidate solution */
+			/* Reroll the out of bounds search points */
 			for (i = 0; i < cmaes_Get(&evo, "popsize"); ++i) {
 			    reroll=0;
                 for(j=0;j<7;j++){
@@ -222,10 +240,14 @@ int main(int argn, char **args)
                     }
                 }
 
+				printf("Looking for a job lol %d\n",i);
+
                 /* setup a job to compute the fitness */
                 for(j=0;1;j=(j+1)%MAX_JOBS){//find a free job
                     pthread_mutex_lock(&usedMutex);
+					printf("LOCKING %d\n",j);
                     if(used[j]==FREE){/* setup new job */
+						jobsParameters[j].N=N;
                         jobsParameters[j].divisionThreshold=pop[i][0];
                         jobsParameters[j].fusionThreshold=pop[i][1];
                         jobsParameters[j].cdiv=pop[i][2];
@@ -235,28 +257,36 @@ int main(int argn, char **args)
                         jobsParameters[j].max_villages=(int)floor(pop[i][6]);
                         funNum[j]=nb;
                         xnum[j]=i;
-                        pthread_mutex_unlock(&usedMutex);
+						used[j]=TODO;
+						printf("Putting job %d in charge of eval %d\n",j,i);
+						pthread_mutex_unlock(&usedMutex);
+						printf("UNLOCKING %d\n",j);
                         break;
                     }else if(used[j]==DONE){/* gather data */
-                        fitvals[xnum[j]] = jobsResults[j].countevals+jobsResults[j].fitness;
+                        printf("Job %d done.\n",j);
+						fitvals[xnum[j]] = jobsResults[j].countevals+jobsResults[j].fitness;
                         used[j]=FREE;
-                        pthread_mutex_unlock(&usedMutex);
-                    }
-
+                    }else{
+						printf("job %d : slot %d inavailable\n",i,j);
+					}
+					pthread_mutex_unlock(&usedMutex);
+					printf("UNLOCKING %d\n",j);
                     if(j==MAX_JOBS-1)
                         usleep(1000);
-                }
-			}
+                }/* jobs */
+				printf("Finished establishing the %d-th evaluation\n",i);
+			}/* pop */
 
 			/* wait for all the jobs to be over, and gather the results */
 			allfree=0;
-            for(j=0;1;j=(j+1)%MAX_JOBS){//find a free job
+            for(j=0;1;j=(j+1)%MAX_JOBS){
                 if(j==0){
                     if(allfree)
                         break;
                     else
                         allfree=1;
-                    usleep(1000);
+					printf("Waiting on the jobs.\n");
+                    usleep(1000000);
                 }
 
                 pthread_mutex_lock(&usedMutex);
@@ -265,9 +295,11 @@ int main(int argn, char **args)
                 if(used[j]==DONE){/* gather data */
                     fitvals[xnum[j]] = jobsResults[j].countevals+jobsResults[j].fitness;
                     used[j]=FREE;
+                    printf("Job %d done.\n",j);
                 }
+				//printf("\tused[%d]=%d\n",j,used[j]);
                 pthread_mutex_unlock(&usedMutex);
-            }
+            }/* jobs */
 
 			/* update search distribution */
 			cmaes_UpdateDistribution(&evo, fitvals);
@@ -288,6 +320,8 @@ int main(int argn, char **args)
 				cmaes_Get(&evo, "maxstddev"), cmaes_Get(&evo, "minstddev")
 		);
 		printf("Stop (run %d):\n%s\n",  irun+1, cmaes_TestForTermination(&evo));*/
+
+		printf(cmaes_TestForTermination(&evo));
 
 		/* write some data */
 		cmaes_WriteToFile(&evo, "all", "allcmaes.dat");
@@ -331,11 +365,11 @@ int main(int argn, char **args)
         pthread_cancel(thr[i]);
 
 	/* clean up */
-	free(jobsParameters);
+	/*free(jobsParameters);
 	free(jobsResults);
 	free(funNum);
 	free(used);
-	free(xnum);
+	free(xnum);*/
 	pthread_mutex_destroy(&usedMutex);
 	pthread_mutex_destroy(&consoleMutex);
 
@@ -349,30 +383,34 @@ void *threadMain(void* arg)
 	result r;
 	int job;
 
+	pthread_mutex_lock(&usedMutex);
+	printf("\tLaunching a thread. used adress : %d\n",a->used);
+	pthread_mutex_unlock(&usedMutex);
+
 	/* search a job to do */
 	while(1){
         for(job=0;job<MAX_JOBS;job++){
-            pthread_mutex_lock(a->used_mutex);
-            if(a->used[job] != TODO)
-                pthread_mutex_unlock(a->used_mutex);
+            pthread_mutex_lock(&usedMutex);
+			printf("\tLOCKING\n");
+			printf("\tchecking job %d state\n",job);
+            if(used[job] != TODO)
+				printf("\tNot todoo.\n");
             else{
-                a->used[job]=DOING;
-                pthread_mutex_unlock(a->used_mutex);
-                pthread_mutex_lock(a->console_mutex);
-                printf("Begining job %d with parameters :\n",job);
-                fprintf(fp, "\t%d, %f, %f, %f, %d, %d, %d, %d\n",
+                used[job]=DOING;
+                printf("\tBegining job %d with parameters :\n",job);
+                printf("\t\t%d, %f, %f, %f, %d, %d, %d, %d\n",
                     jobsParameters[job].N, jobsParameters[job].divisionThreshold,
                     jobsParameters[job].fusionThreshold, jobsParameters[job].cdiv,
                     jobsParameters[job].recovery, jobsParameters[job].tooYoung,
                     jobsParameters[job].mud, jobsParameters[job].max_villages);
-                pthread_mutex_unlock(a->console_mutex);
-                a->m_result[job] = optimize(a->pfun,a->m_parameters[job],a->filename);
-                pthread_mutex_lock(a->console_mutex);
-                printf("Finished job %d\n",job);
-                pthread_mutex_unlock(a->console_mutex);
+                jobsResults[job] = optimize(a->funcs[funNum[job]],jobsParameters[job],a->filename);
+                printf("\tFinished job %d\n",job);
             }
-        }
-        usleep(1000);
+            pthread_mutex_unlock(&usedMutex);
+			printf("\tUNLOCKING\n");
+		}
+	printf("\tJust gonna sleep for a while...\n");
+    usleep(1000000);
 	}
 }
 
@@ -397,7 +435,7 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
                   p.N,
                   NULL, NULL, 0, 0, p.divisionThreshold, p.cdiv, p.mud, filename);
 
-    //printf("Dimension %d, ft %.3e\n",p.N,p.fusionThreshold);
+    printf("\t\tBegin optimization : N=%d\n",p.N);
     //printf("Supplemented : %d, dt : %f\n",evo.villages[0]->sp.flgsupplemented, evo.villages[0]->sp.divisionThreshold);
 
     while(!evo.stahp){
@@ -434,7 +472,7 @@ double f_constant( double const *x)
 }
 #endif
 
-static double SQR(double d)
+double SQR(double d)
 {
 	return (d*d);
 }
