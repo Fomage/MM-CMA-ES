@@ -431,15 +431,16 @@ result optimize(double(*pFun)(double const *), parameters p, char * filename)
                   p.recovery,
                   p.tooYoung,
                   p.fusionThreshold,
-                  0,//fusion factor
+                  .5,//fusion factor
                   p.N,
                   NULL, NULL, 0, 0, p.divisionThreshold, p.cdiv, p.mud, filename);
 
+	
     printf("\t\tBegin optimization : N=%d\n",p.N);
     //printf("Supplemented : %d, dt : %f\n",evo.villages[0]->sp.flgsupplemented, evo.villages[0]->sp.divisionThreshold);
 
     while(!evo.stahp){
-	  mm_cmaes_run(&evo,pFun,0);
+	  mm_cmaes_run(&evo,pFun,1);
     }
 
     /*printf("MM CMA ES terminated in %d function evaluations, for a final fitness of %.5e.\n",
