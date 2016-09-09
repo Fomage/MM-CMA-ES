@@ -3,8 +3,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stddef.h> /* NULL */
-#include <pthread.h>
-#include <unistd.h> /* sleep */
 #include "cmaes_interface.h"
 /* result type for performances analysis */
 typedef struct
@@ -27,19 +25,6 @@ typedef struct
     int tooYoung;
     int mud;
 } parameters;
-
-/* argument for the thread functions */
-#define MAX_THREADS 10
-typedef struct
-{
-	char *filename;
-	char *used;
-	int *funNum;
-	(double (*pfun)(double const *))* funcs;
-	result *m_result;
-	parameters *m_parameters;
-	pthread_mutex_t *used_mutex,*console_mutex;
-} threadArgument;
 
 /*___________________________________________________________________________
  *
@@ -72,21 +57,12 @@ result optimize(double(*pFun)(double const *),
 		char *input_parameter_filename);
 void writeResults();
 
-void *threadMain(void* arg);
-
 extern void   cmaes_random_init( cmaes_random_t *, long unsigned seed /*=0=clock*/);
 extern void   cmaes_random_exit( cmaes_random_t *);
 extern double cmaes_random_Gauss( cmaes_random_t *); /* (0,1)-normally distributed */
 
-
-#define N_MAX 40
-#define N_STEP 1
 #define SUCCESS_THRESHOLD 1e-13
-#define MAX_JOBS 10
-#define FREE 0
-#define TODO 1
-#define DOING 2
-#define DONE 3
+
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
@@ -102,7 +78,7 @@ int main(int argn, char **args)
 	const char *s = "testOutput.csv";
     FILE *fp;
 
-	int i,N;
+	int i,N=2;
 
 	/* Put together objective functions */
 	rgpFun[0] = f_sphere;
@@ -117,198 +93,149 @@ int main(int argn, char **args)
 	rgpFun[9] = f_kugelmin1;
 	rgpFun[10] = f_ellinumtest;
 	rgpFun[11] = f_elli100;
-	rgpFun[18] = f_gleichsys5;
-	rgpFun[19] = f_rand;
-	rgpFun[20] = f_constant;
-	rgpFun[21] = f_stepsphere;
-	rgpFun[22] = f_ellirot;
-	rgpFun[23] = f_diffpowrot;
-	rgpFun[24] = f_rastrigin;
+	rgpFun[12] = f_gleichsys5;
+	rgpFun[13] = f_rand;
+	rgpFun[14] = f_constant;
+	rgpFun[15] = f_stepsphere;
+	rgpFun[16] = f_ellirot;
+	rgpFun[17] = f_diffpowrot;
+	rgpFun[18] = f_rastrigin;
 	//int maxnb = 24;
 
-    int nb=0;
+    int nbFun=0;
 
-	/* specify jobs to do, i.e every optimize() call to do */
-	parameters *jobsParameters = (parameters*) calloc(MAX_JOBS,sizeof(parameters));
-	result *jobsResults = (result*) calloc(MAX_JOBS,sizeof(result));
-	int* funNum = (int*) calloc(MAX_JOBS,sizeof(int));
-	char* used = (char*) calloc(MAX_JOBS,sizeof(char));
-	int* xnum = (int*) calloc(MAX_JOBS,sizeof(int));
+    /* print the parameters */
+    for(i=0;i<argn;i++)
+        printf("%s\n",args[i]);
+    printf("\n");
 
-	for(i=0;i<MAX_JOBS;i++)
-        used[i] = FREE;
-
-	pthread_mutex_t usedMutex = PTHREAD_MUTEX_INITIALIZER;
-	pthread_mutex_init(&usedMutex,NULL);
-	pthread_mutex_t consoleMutex = PTHREAD_MUTEX_INITIALIZER;
-	pthread_mutex_init(&consoleMutex,NULL);
+    /* read the parameters */
+    for(i=1;i<argn;i++){
+        if(strcmp(args[i],"-N")){
+            i++;
+            sscanf(args[i],"%d",&N);
+        }else if(strcmp(args[i],"-f")){
+            i++;
+            sscanf(args[i],"%d",&nbFun);
+        }else{
+            printf("Wrong arguments.\n");
+            return -1;
+        }
+    }
 
 	/* prep output file */
-	fp = fopen( s, "a");
+	/*fp = fopen( s, "a");
     if(fp == NULL) {
         printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
         return -2;
     }
-    fprintf("\"N\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n")
-    fclose(fp);
-
-    /* launch the threads */
-	pthread_t thr[MAX_THREADS];
-    for(i=1;i<MAX_THREADS;i++){
-		threadArgument theArg;
-		theArg.funcs = rgpFun;
-		theArg.filename = filename;
-		theArg.used = used;
-		theArg.funNum = funNum;
-		theArg.m_result = jobsResults;
-		theArg.m_parameters = jobsParameters;
-		theArg.used_mutex = &usedMutex;
-		theArg.console_mutex = &consoleMutex;
-        if(pthread_create(&thr[i],NULL,threadMain,&theArg)){
-			printf("Error creating thread %d\n",i);
-			return -1;
-		}
-	}
+    fprintf("\"N\", \"fun\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n")
+    fclose(fp);*/
 
     /* CMAES strategy */
-    for(N=2;N<100;N++){
-        cmaes_t evo;       /* the optimizer */
-        double *const*pop; /* sampled population */
-        double *fitvals;   /* objective function values of sampled population */
-        double fbestever=0, *xbestever=NULL; /* store best solution */
-        double fmean;
-        int j;
-        lambda = 0;      /* offspring population size, 0 invokes default */
-        char const * stop; /* stop message */
-        char reroll,allfree;
+    cmaes_t evo;       /* the optimizer */
+    double *const*pop; /* sampled population */
+    double *fitvals;   /* objective function values of sampled population */
+    double fbestever=0, *xbestever=NULL; /* store best solution */
+    int j, lambda = 0;      /* offspring population size, 0 invokes default */
+    char const * stop; /* stop message */
+    char reroll;
+    result tempRes;
+    parameters tempPar;
 
-        double *xstart = (double*) calloc(7,sizeof(double));
-        double *stddev = (double*) calloc(7,sizeof(double));
-        xstart[0]=0.7*ln(0.7*N)+0.4;stddev[0]=.75*xstart[0];//dt
-        xstart[1]=0.000346*N*N*N+0.4;stddev[1]=.75*xstart[1];//ft
-        xstart[2]=.5;stddev[2]=.25;//cdiv
-        xstart[3]=10;stddev[3]=10;//recoveryTimeAfterSplit
-        xstart[4]=2;stddev[4]=2;//tooYoungToSplit
-        xstart[5]=1+floor(.75*ln(N));stddev[5]=floor(.75*ln(N));//mud
-        xstart[6]=N+2;stddev[6]=N/2;//max_villages
+    double *xstart = (double*) calloc(7,sizeof(double));
+    double *stddev = (double*) calloc(7,sizeof(double));
+    xstart[0]=0.7*log(0.7*N)+0.4;stddev[0]=.75*xstart[0];//dt
+    xstart[1]=0.000346*N*N*N+0.4;stddev[1]=.75*xstart[1];//ft
+    xstart[2]=.5;stddev[2]=.25;//cdiv
+    xstart[3]=10;stddev[3]=10;//recoveryTimeAfterSplit
+    xstart[4]=2;stddev[4]=2;//tooYoungToSplit
+    xstart[5]=1+floor(.75*log(N));stddev[5]=floor(.75*log(N))<1?1:floor(.75*log(N));//mud
+    xstart[6]=N+2;stddev[6]=N/2;//max_villages
 
-		/* Parameters can be set in three ways. Here as input parameter
-		 * to cmaes_init, as value read from cmaes_initials.par in cmaes_readpara_init
-		 * during initialization, and as value read from cmaes_signals.par by
-		 * calling cmaes_ReadSignals explicitely.
-		 */
-		fitvals = cmaes_init(&evo, N, xstart, stddev, 0, lambda, 0, 0, 0, filename); /* allocs fitvals */
-		evo.canSplit = 0;
-		printf("%s\n", cmaes_SayHello(&evo));
-		evo.countevals = countevals; /* a hack, effects the output and termination */
-		cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* write initial values, headers in case */
+    /* Parameters can be set in three ways. Here as input parameter
+     * to cmaes_init, as value read from cmaes_initials.par in cmaes_readpara_init
+     * during initialization, and as value read from cmaes_signals.par by
+     * calling cmaes_ReadSignals explicitely.
+     */
+    fitvals = cmaes_init(&evo, 7, xstart, stddev, 0, lambda, 0, 0, 0, filename); /* allocs fitvals */
+    evo.canSplit = 0;
+    printf("%s\n", cmaes_SayHello(&evo));
+    cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* write initial values, headers in case */
 
-		while(!(stop=cmaes_TestForTermination(&evo)))
-		{
-			/* Generate population of new candidate solutions */
-			pop = cmaes_SamplePopulation(&evo); /* do not change content of pop */
+    while(!(stop=cmaes_TestForTermination(&evo)))
+    {
+        /* Generate population of new candidate solutions */
+        pop = cmaes_SamplePopulation(&evo); /* do not change content of pop */
 
-			/* Compute fitness value for each candidate solution */
-			for (i = 0; i < cmaes_Get(&evo, "popsize"); ++i) {
-			    reroll=0;
+        /* Compute fitness value for each candidate solution */
+        for (i = 0; i < cmaes_Get(&evo, "popsize"); ++i) {
+            reroll=0;
+            for(j=0;j<7;j++){
+                reroll=reroll || ((pop[i][j]<0) || ((j==2) && (pop[i][j]>1)));
+            }
+            while(reroll){
+                cmaes_ReSampleSingle(&evo, i);
+                reroll=0;
                 for(j=0;j<7;j++){
                     reroll=reroll || ((pop[i][j]<0) || ((j==2) && (pop[i][j]>1)));
                 }
-                while(reroll){
-                    cmaes_ReSampleSingle(&evo, i);
-                    reroll=0;
-                    for(j=0;j<7;j++){
-                        reroll=reroll || ((pop[i][j]<0) || ((j==2) && (pop[i][j]>1)));
-                    }
-                }
-
-                /* setup a job to compute the fitness */
-                for(j=0;1;j=(j+1)%MAX_JOBS){//find a free job
-                    pthread_mutex_lock(&usedMutex);
-                    if(used[j]==FREE){/* setup new job */
-                        jobsParameters[j].divisionThreshold=pop[i][0];
-                        jobsParameters[j].fusionThreshold=pop[i][1];
-                        jobsParameters[j].cdiv=pop[i][2];
-                        jobsParameters[j].recovery=(int)floor(pop[i][3]);
-                        jobsParameters[j].tooYoung=(int)floor(pop[i][4]);
-                        jobsParameters[j].mud=(int)floor(pop[i][5]);
-                        jobsParameters[j].max_villages=(int)floor(pop[i][6]);
-                        funNum[j]=nb;
-                        xnum[j]=i;
-                        pthread_mutex_unlock(&usedMutex);
-                        break;
-                    }else if(used[j]==DONE){/* gather data */
-                        fitvals[xnum[j]] = jobsResults[j].countevals+jobsResults[j].fitness;
-                        used[j]=FREE;
-                        pthread_mutex_unlock(&usedMutex);
-                    }
-
-                    if(j==MAX_JOBS-1)
-                        usleep(1000);
-                }
-			}
-
-			/* wait for all the jobs to be over, and gather the results */
-			allfree=0;
-            for(j=0;1;j=(j+1)%MAX_JOBS){//find a free job
-                if(j==0){
-                    if(allfree)
-                        break;
-                    else
-                        allfree=1;
-                    usleep(1000);
-                }
-
-                pthread_mutex_lock(&usedMutex);
-                if(used[j]!=FREE)
-                    allfree=0;
-                if(used[j]==DONE){/* gather data */
-                    fitvals[xnum[j]] = jobsResults[j].countevals+jobsResults[j].fitness;
-                    used[j]=FREE;
-                }
-                pthread_mutex_unlock(&usedMutex);
             }
+            tempPar.divisionThreshold = pop[i][0];
+            tempPar.fusionThreshold = pop[i][1];
+            tempPar.cdiv = pop[i][2];
+            tempPar.recovery = pop[i][3];
+            tempPar.tooYoung = pop[i][4];
+            tempPar.mud = pop[i][5];
+            tempPar.max_villages = pop[i][6];
+            tempPar.N = N;
 
-			/* update search distribution */
-			cmaes_UpdateDistribution(&evo, fitvals);
+            tempRes = optimize(rgpFun[nbFun],tempPar,filename);
 
-			/* read control signals for output and termination */
-			cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
-
-			fflush(stdout);
-		} /* while !cmaes_TestForTermination(&evo) */
-
-		/* print some "final" output */
-		/*printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
-				cmaes_Get(&evo, "gen"), cmaes_Get(&evo, "eval"),
-				evo.eigenTimings.totaltime,
-				cmaes_Get(&evo, "funval"));
-		printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
-				cmaes_Get(&evo, "maxaxislen") / cmaes_Get(&evo, "minaxislen"),
-				cmaes_Get(&evo, "maxstddev"), cmaes_Get(&evo, "minstddev")
-		);
-		printf("Stop (run %d):\n%s\n",  irun+1, cmaes_TestForTermination(&evo));*/
-
-		/* write some data */
-		cmaes_WriteToFile(&evo, "all", "allcmaes.dat");
-
-        xbestever = cmaes_GetInto(&evo, "xbestever", xbestever);
-        fbestever = cmaes_Get(&evo,"fbestever");
-
-		cmaes_exit(&evo); /* does not effect the content of stop string and xbestever */
-
-        /*write some data under a more concise form */
-        fp = fopen( s, "a");
-        if(fp == NULL) {
-            printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
-            return -2;
+            fitvals[i] = (double)tempRes.countevals + (tempRes.fitness<SUCCESS_THRESHOLD?tempRes.fitness:1e7);
         }
-        fprintf(fp, "%d, %f, %f, %f, %f, %d, %d, %d, %d\n",
-            N, fbestever, xbestever[0],xbestever[1],xbestever[2],
-            xbestever[3],xbestever[4],xbestever[5],xbestever[6]);
-        fclose(fp);
-        free(xbestever);
+
+        /* update search distribution */
+        cmaes_UpdateDistribution(&evo, fitvals);
+
+        /* read control signals for output and termination */
+        cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
+
+        fflush(stdout);
+    } /* while !cmaes_TestForTermination(&evo) */
+
+    /* print some "final" output */
+    /*printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
+            cmaes_Get(&evo, "gen"), cmaes_Get(&evo, "eval"),
+            evo.eigenTimings.totaltime,
+            cmaes_Get(&evo, "funval"));
+    printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
+            cmaes_Get(&evo, "maxaxislen") / cmaes_Get(&evo, "minaxislen"),
+            cmaes_Get(&evo, "maxstddev"), cmaes_Get(&evo, "minstddev")
+    );
+    printf("Stop (run %d):\n%s\n",  irun+1, cmaes_TestForTermination(&evo));*/
+
+    printf("%s\n",cmaes_TestForTermination(&evo));
+
+    /* write some data */
+    cmaes_WriteToFile(&evo, "all", "allcmaes.dat");
+
+    xbestever = cmaes_GetInto(&evo, "xmean", xbestever);
+    fbestever = cmaes_Get(&evo,"fbestever");
+
+    cmaes_exit(&evo); /* does not effect the content of stop string and xbestever */
+
+    /*write some data under a more concise form */
+    fp = fopen( s, "a");
+    if(fp == NULL) {
+        printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
+        return -2;
     }
+    fprintf(fp, "%d, %d, %f, %f, %f, %f, %d, %d, %d, %d\n",
+        N, nbFun, fbestever, xbestever[0],xbestever[1],xbestever[2],
+        (int)xbestever[3],(int)xbestever[4],(int)xbestever[5],(int)xbestever[6]);
+    fclose(fp);
+    free(xbestever);
 
 //    /* write results */
 //	fp = fopen( s, "a");
@@ -325,57 +252,9 @@ int main(int argn, char **args)
 //    }
 //    fclose(fp);
 
-
-    /* shutdown the threads */
-    for(i=1;i<MAX_THREADS;i++)
-        pthread_cancel(thr[i]);
-
-	/* clean up */
-	free(jobsParameters);
-	free(jobsResults);
-	free(funNum);
-	free(used);
-	free(xnum);
-	pthread_mutex_destroy(&usedMutex);
-	pthread_mutex_destroy(&consoleMutex);
-
-	return 0;
+    return 0;
 
 } /* main() */
-
-void *threadMain(void* arg)
-{
-	threadArgument* a = (threadArgument*) arg;
-	result r;
-	int job;
-
-	/* search a job to do */
-	while(1){
-        for(job=0;job<MAX_JOBS;job++){
-            pthread_mutex_lock(a->used_mutex);
-            if(a->used[job] != TODO)
-                pthread_mutex_unlock(a->used_mutex);
-            else{
-                a->used[job]=DOING;
-                pthread_mutex_unlock(a->used_mutex);
-                pthread_mutex_lock(a->console_mutex);
-                printf("Begining job %d with parameters :\n",job);
-                fprintf(fp, "\t%d, %f, %f, %f, %d, %d, %d, %d\n",
-                    jobsParameters[job].N, jobsParameters[job].divisionThreshold,
-                    jobsParameters[job].fusionThreshold, jobsParameters[job].cdiv,
-                    jobsParameters[job].recovery, jobsParameters[job].tooYoung,
-                    jobsParameters[job].mud, jobsParameters[job].max_villages);
-                pthread_mutex_unlock(a->console_mutex);
-                a->m_result[job] = optimize(a->pfun,a->m_parameters[job],a->filename);
-                pthread_mutex_lock(a->console_mutex);
-                printf("Finished job %d\n",job);
-                pthread_mutex_unlock(a->console_mutex);
-            }
-        }
-        usleep(1000);
-	}
-}
-
 
 /*___________________________________________________________________________
 //___________________________________________________________________________
