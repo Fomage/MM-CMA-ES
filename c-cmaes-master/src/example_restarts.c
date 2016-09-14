@@ -111,10 +111,10 @@ int main(int argn, char **args)
 
     /* read the parameters */
     for(i=1;i<argn;i++){
-        if(strcmp(args[i],"-N")){
+        if(strcmp(args[i],"-N")==0){
             i++;
             sscanf(args[i],"%d",&N);
-        }else if(strcmp(args[i],"-f")){
+        }else if(strcmp(args[i],"-f")==0){
             i++;
             sscanf(args[i],"%d",&nbFun);
         }else{
@@ -132,6 +132,7 @@ int main(int argn, char **args)
     fprintf("\"N\", \"fun\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n")
     fclose(fp);*/
 
+#if 0
     /* CMAES strategy */
     cmaes_t evo;       /* the optimizer */
     double *const*pop; /* sampled population */
@@ -224,6 +225,44 @@ int main(int argn, char **args)
     fbestever = cmaes_Get(&evo,"fbestever");
 
     cmaes_exit(&evo); /* does not effect the content of stop string and xbestever */
+#endif
+
+#define NB_SAMPLINGS 20
+	parameters tempPar;
+	result tempRes;
+	double countevals=0,bestCountevals=-1;
+	int successes=0,bestSuccesses=-1,minSuccesses=NB_SAMPLINGS*.8;
+
+	tempPar.divisionThreshold = 0.7*log(0.7*N)+0.4;
+	tempPar.fusionThreshold = 0.000346*N*N*N+0.4;
+	tempPar.cdiv = .5;
+	tempPar.recovery = 10;
+	tempPar.tooYoung = 10;
+	tempPar.mud = 1+floor(.75*log(N));
+	tempPar.max_villages = N+2;
+	tempPar.N = N;
+
+	double lowerBound=0,upperBound=tempPar.divisionThreshold*2;
+	double step=(upperBound-lowerBound)/10.;
+
+	double id,bestParam=-1;
+	for(id=lowerBound;id<=upperBound;id++){
+		countevals=0;
+		successes=0;
+		tempPar.divisionThreshold = id;
+		for(i=0;i<NB_SAMPLINGS;i++){
+			tempRes = optimize(rgpFun[nbFun],tempPar,NULL);
+			if(tempRes.fitness<SUCCESS_THRESHOLD){
+				countevals+=tempRes.countevals;
+				successes++;
+			}
+		}
+		if((successes>minSuccesses) && ((countevals/successes < bestCountevals) || (bestCountevals==-1))){
+			bestSuccesses=successes;
+			bestCountevals=countevals/successes;
+			bestParam=id;
+		}
+	}
 
     /*write some data under a more concise form */
     fp = fopen( s, "a");
@@ -231,11 +270,12 @@ int main(int argn, char **args)
         printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
         return -2;
     }
-    fprintf(fp, "%d, %d, %f, %f, %f, %f, %d, %d, %d, %d\n",
-        N, nbFun, fbestever, xbestever[0],xbestever[1],xbestever[2],
-        (int)xbestever[3],(int)xbestever[4],(int)xbestever[5],(int)xbestever[6]);
+    fprintf(fp, "%d, %d, %s, %f, %d, %f, %f, %f, %d, %d, %d, %d\n",
+        N, nbFun, "divisionThreshold", bestCountevals, bestSuccesses,
+		bestParam,tempPar.fusionThreshold,tempPar.cdiv,
+        tempPar.recovery,tempPar.tooYoung,tempPar.mud,tempPar.max_villages);
     fclose(fp);
-    free(xbestever);
+    //free(xbestever);
 
 //    /* write results */
 //	fp = fopen( s, "a");
