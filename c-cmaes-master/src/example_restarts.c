@@ -74,7 +74,7 @@ int main(int argn, char **args)
 {
 	typedef double (*pfun_t)(double const *);
 	pfun_t rgpFun[99];  /* array (range) of pointer to objective function */
-	char *filename = "cmaes_initials.par"; /* input parameter file */
+	//char *filename = "cmaes_initials.par"; /* input parameter file */
 	const char *s = "testOutput.csv";
     FILE *fp;
 
@@ -103,6 +103,8 @@ int main(int argn, char **args)
 	//int maxnb = 24;
 
     int nbFun=0;
+    char estParam[99];
+    double paramValue=-1;
 
     /* print the parameters */
     for(i=0;i<argn;i++)
@@ -111,127 +113,30 @@ int main(int argn, char **args)
 
     /* read the parameters */
     for(i=1;i<argn;i++){
-        if(strcmp(args[i],"-N")==0){
+        if(strcmp(args[i],"-n")==0){
             i++;
             sscanf(args[i],"%d",&N);
         }else if(strcmp(args[i],"-f")==0){
             i++;
             sscanf(args[i],"%d",&nbFun);
+        }else if(strcmp(args[i],"-p")==0){
+            i++;
+            sscanf(args[i],"%s",estParam);
+        }else if(strcmp(args[i],"-v")==0){
+            i++;
+            sscanf(args[i],"%lf",&paramValue);
         }else{
             printf("Wrong arguments.\n");
             return -1;
         }
     }
 
-	/* prep output file */
-	/*fp = fopen( s, "a");
-    if(fp == NULL) {
-        printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
-        return -2;
-    }
-    fprintf("\"N\", \"fun\", \"countevals\", \"dt\", \"ft\", \"cdiv\", \"recovery\", \"tooYoung\", \"mud\", \"max_v\"\n")
-    fclose(fp);*/
+    printf("Parameters : N=%d, nbFun=%d, estimated parameter=%s, value=%f\n",N,nbFun,estParam,paramValue);
 
-#if 0
-    /* CMAES strategy */
-    cmaes_t evo;       /* the optimizer */
-    double *const*pop; /* sampled population */
-    double *fitvals;   /* objective function values of sampled population */
-    double fbestever=0, *xbestever=NULL; /* store best solution */
-    int j, lambda = 0;      /* offspring population size, 0 invokes default */
-    char const * stop; /* stop message */
-    char reroll;
-    result tempRes;
-    parameters tempPar;
-
-    double *xstart = (double*) calloc(7,sizeof(double));
-    double *stddev = (double*) calloc(7,sizeof(double));
-    xstart[0]=0.7*log(0.7*N)+0.4;stddev[0]=.75*xstart[0];//dt
-    xstart[1]=0.000346*N*N*N+0.4;stddev[1]=.75*xstart[1];//ft
-    xstart[2]=.5;stddev[2]=.25;//cdiv
-    xstart[3]=10;stddev[3]=10;//recoveryTimeAfterSplit
-    xstart[4]=2;stddev[4]=2;//tooYoungToSplit
-    xstart[5]=1+floor(.75*log(N));stddev[5]=floor(.75*log(N))<1?1:floor(.75*log(N));//mud
-    xstart[6]=N+2;stddev[6]=N/2;//max_villages
-
-    /* Parameters can be set in three ways. Here as input parameter
-     * to cmaes_init, as value read from cmaes_initials.par in cmaes_readpara_init
-     * during initialization, and as value read from cmaes_signals.par by
-     * calling cmaes_ReadSignals explicitely.
-     */
-    fitvals = cmaes_init(&evo, 7, xstart, stddev, 0, lambda, 0, 0, 0, filename); /* allocs fitvals */
-    evo.canSplit = 0;
-    printf("%s\n", cmaes_SayHello(&evo));
-    cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* write initial values, headers in case */
-
-    while(!(stop=cmaes_TestForTermination(&evo)))
-    {
-        /* Generate population of new candidate solutions */
-        pop = cmaes_SamplePopulation(&evo); /* do not change content of pop */
-
-        /* Compute fitness value for each candidate solution */
-        for (i = 0; i < cmaes_Get(&evo, "popsize"); ++i) {
-            reroll=0;
-            for(j=0;j<7;j++){
-                reroll=reroll || ((pop[i][j]<0) || ((j==2) && (pop[i][j]>1)));
-            }
-            while(reroll){
-                cmaes_ReSampleSingle(&evo, i);
-                reroll=0;
-                for(j=0;j<7;j++){
-                    reroll=reroll || ((pop[i][j]<0) || ((j==2) && (pop[i][j]>1)));
-                }
-            }
-            tempPar.divisionThreshold = pop[i][0];
-            tempPar.fusionThreshold = pop[i][1];
-            tempPar.cdiv = pop[i][2];
-            tempPar.recovery = pop[i][3];
-            tempPar.tooYoung = pop[i][4];
-            tempPar.mud = pop[i][5];
-            tempPar.max_villages = pop[i][6];
-            tempPar.N = N;
-
-            tempRes = optimize(rgpFun[nbFun],tempPar,filename);
-
-            fitvals[i] = (double)tempRes.countevals + (tempRes.fitness<SUCCESS_THRESHOLD?tempRes.fitness:1e7);
-        }
-
-        /* update search distribution */
-        cmaes_UpdateDistribution(&evo, fitvals);
-
-        /* read control signals for output and termination */
-        cmaes_ReadSignals(&evo, "cmaes_signals.par"); /* from file cmaes_signals.par */
-
-        fflush(stdout);
-    } /* while !cmaes_TestForTermination(&evo) */
-
-    /* print some "final" output */
-    /*printf("%.0f generations, %.0f fevals (%.1f sec): f(x)=%g\n",
-            cmaes_Get(&evo, "gen"), cmaes_Get(&evo, "eval"),
-            evo.eigenTimings.totaltime,
-            cmaes_Get(&evo, "funval"));
-    printf("  (axis-ratio=%.2e, max/min-stddev=%.2e/%.2e)\n",
-            cmaes_Get(&evo, "maxaxislen") / cmaes_Get(&evo, "minaxislen"),
-            cmaes_Get(&evo, "maxstddev"), cmaes_Get(&evo, "minstddev")
-    );
-    printf("Stop (run %d):\n%s\n",  irun+1, cmaes_TestForTermination(&evo));*/
-
-    printf("%s\n",cmaes_TestForTermination(&evo));
-
-    /* write some data */
-    cmaes_WriteToFile(&evo, "all", "allcmaes.dat");
-
-    xbestever = cmaes_GetInto(&evo, "xmean", xbestever);
-    fbestever = cmaes_Get(&evo,"fbestever");
-
-    cmaes_exit(&evo); /* does not effect the content of stop string and xbestever */
-#endif
-
-#define NB_SAMPLINGS 20
 	parameters tempPar;
 	result tempRes;
-	double countevals=0,bestCountevals=-1;
-	int successes=0,bestSuccesses=-1,minSuccesses=NB_SAMPLINGS*.8;
+	double countevals=0;
+	int successes=0;
 
 	tempPar.divisionThreshold = 0.7*log(0.7*N)+0.4;
 	tempPar.fusionThreshold = 0.000346*N*N*N+0.4;
@@ -242,27 +147,30 @@ int main(int argn, char **args)
 	tempPar.max_villages = N+2;
 	tempPar.N = N;
 
-	double lowerBound=0,upperBound=tempPar.divisionThreshold*2;
-	double step=(upperBound-lowerBound)/10.;
+	if(strcmp(estParam,"dt")==0)
+        tempPar.divisionThreshold = paramValue;
+    else if(strcmp(estParam,"ft")==0)
+        tempPar.fusionThreshold = paramValue;
+    else if(strcmp(estParam,"cdiv")==0)
+        tempPar.fusionThreshold = paramValue;
+    else if(strcmp(estParam,"recovery")==0)
+        tempPar.recovery = (int)paramValue;
+    else if(strcmp(estParam,"tooYoung")==0)
+        tempPar.tooYoung = (int)paramValue;
+    else if(strcmp(estParam,"mud")==0)
+        tempPar.mud = (int)paramValue;
+    else if(strcmp(estParam,"maxV")==0)
+        tempPar.max_villages = (int)paramValue;
+    else{
+        printf("FATAL ERROR : unknown estimated parameter %s\n",estParam);
+        return -1;
+    }
 
-	double id,bestParam=-1;
-	for(id=lowerBound;id<=upperBound;id++){
-		countevals=0;
-		successes=0;
-		tempPar.divisionThreshold = id;
-		for(i=0;i<NB_SAMPLINGS;i++){
-			tempRes = optimize(rgpFun[nbFun],tempPar,NULL);
-			if(tempRes.fitness<SUCCESS_THRESHOLD){
-				countevals+=tempRes.countevals;
-				successes++;
-			}
-		}
-		if((successes>minSuccesses) && ((countevals/successes < bestCountevals) || (bestCountevals==-1))){
-			bestSuccesses=successes;
-			bestCountevals=countevals/successes;
-			bestParam=id;
-		}
-	}
+    tempRes = optimize(rgpFun[nbFun],tempPar,NULL);
+    if(tempRes.fitness<SUCCESS_THRESHOLD){
+        countevals+=tempRes.countevals;
+        successes++;
+    }
 
     /*write some data under a more concise form */
     fp = fopen( s, "a");
@@ -270,9 +178,9 @@ int main(int argn, char **args)
         printf("cmaes_WriteToFile(): could not open '%s' with flag 'a'\n", s);
         return -2;
     }
-    fprintf(fp, "%d, %d, %s, %f, %d, %f, %f, %f, %d, %d, %d, %d\n",
-        N, nbFun, "divisionThreshold", bestCountevals, bestSuccesses,
-		bestParam,tempPar.fusionThreshold,tempPar.cdiv,
+    fprintf(fp, "%d, %d, %s, %f, %d, %d, %d, %f, %f, %f, %d, %d, %d, %d\n",
+        N, nbFun, estParam, countevals, successes,tempRes.nbSplits, tempRes.nbMerges,
+		tempPar.divisionThreshold,tempPar.fusionThreshold,tempPar.cdiv,
         tempPar.recovery,tempPar.tooYoung,tempPar.mud,tempPar.max_villages);
     fclose(fp);
     //free(xbestever);
