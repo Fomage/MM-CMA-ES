@@ -15,7 +15,7 @@ restarts 0 2                    # read by example_restarts.c, remark that restar
 # 
 
 ## --- OBLIGATORY SETTINGS
-# these settings, if read, overwrite the input values to cmaes_init 
+# these settings, if read, overwrite the input values to cmaes_init 	
 
 # N 22        # Problem dimension, overwrites parameter in cmaes_init
 # initialX 1:   # Initial search point. Syntax: 1==read one number, see also end of file. 
