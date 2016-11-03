@@ -166,6 +166,7 @@
 long   cmaes_random_init(cmaes_random_t *, long unsigned seed /* 0==clock */);
 void   cmaes_random_exit(cmaes_random_t *);
 double cmaes_random_Gauss(cmaes_random_t *); /* (0,1)-normally distributed */
+void cmaes_random_Gauss_vector(cmaes_random_t *, double*, int);
 double cmaes_random_Uniform(cmaes_random_t *);
 long   cmaes_random_Long( cmaes_random_t *t);
 long   cmaes_random_Start(cmaes_random_t *, long unsigned seed /* 0==1 */);
@@ -246,6 +247,8 @@ static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t);
 static void mm_cmaes_allowSplit(mm_cmaes_t *t, char b);
 static char mm_cmaes_checkFusion(mm_cmaes_t *t, int i, int j);
 static void mm_cmaes_mergeVillages(mm_cmaes_t *t, int i, int j);
+static void sobseq(int *n, float x[]);
+static double normal_quantile(double fraction);
 
 static const char * c_cmaes_version = "3.20.01";
 
@@ -622,6 +625,7 @@ cmaes_init_final(cmaes_t *t /* "this" */)
   }
 
   t->sp.seed = cmaes_random_init( &t->rand, (long unsigned int) t->sp.seed);
+  i=-1;if(t->sp.sobol) sobseq(&i,NULL);
 
   N = t->sp.N; /* for convenience */
 
@@ -1195,8 +1199,12 @@ cmaes_SamplePopulation(cmaes_t *t)
     }
   }else{
     for(iNk=0;iNk<t->sp.lambda;iNk++){
-      for(i=0;i<N;i++)
-        t->rgrgx[iNk][i]=cmaes_random_Gauss(&t->rand);
+      if(t->sp.sobol)
+        cmaes_random_Gauss_vector(&t->rand,t->rgrgx[iNk],N);
+      else{
+        for(i=0;i<N;i++)
+          t->rgrgx[iNk][i]=cmaes_random_Gauss(&t->rand);
+      }
     }
   }
 
@@ -3196,6 +3204,17 @@ double cmaes_random_Gauss(cmaes_random_t *t)
   return fac * x2;
 }
 
+void cmaes_random_Gauss_vector(cmaes_random_t *t, double* vect, int n){
+  float *temp=malloc((n+1)*sizeof(float));
+  int i;
+
+  sobseq(&n,temp);
+
+  for(i=0;i<n;i++)
+    vect[i]=normal_quantile(temp[i+1]);
+  free(temp);
+}
+
 /* --------------------------------------------------------- */
 double cmaes_random_Uniform( cmaes_random_t *t)
 {
@@ -3270,6 +3289,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
   t->rgsformat[i] = " stopTolX %lg"; t->rgpadr[i++]=(void *) &t->stopTolX;
   t->rgsformat[i] = " stopTolUpXFactor %lg"; t->rgpadr[i++]=(void *) &t->stopTolUpXFactor;
   t->rgsformat[i] = " noRandom %d";      t->rgpadr[i++] = (void *) &t->flgNoRandom;
+  t->rgsformat[i] = " sobol %d";      t->rgpadr[i++] = (void *) &t->sobol;
   t->rgsformat[i] = " lambda %d";      t->rgpadr[i++] = (void *) &t->lambda;
   t->rgsformat[i] = " mu %d";          t->rgpadr[i++] = (void *) &t->mu;
   t->rgsformat[i] = " mud %d";          t->rgpadr[i++] = (void *) &t->mud;
@@ -3298,6 +3318,7 @@ cmaes_readpara_init (cmaes_readpara_t *t,
 
   t->N = dim;
   t->seed = (unsigned) inseed;
+  t->sobol=1;
   t->divisionThreshold = dt;
   t->xstart = NULL;
   t->typicalX = NULL;
@@ -4043,5 +4064,124 @@ int* kmeans(double **data, int n, int N, int k, double t, int* initialCentroids,
   return labels;
 }
 
+/*----------------------------------------------------------------------------*/
+/* sobol sequence */
+
+#define MAXBIT 30
+#define MAXDIM 100
+#define INIT_FILE "sobolInit.txt"
+
+void sobseq(int *n, float x[])
+{
+    int j,k,l;
+    unsigned long i,im,ipp;
+    static float fac;
+    static unsigned long in,ix[MAXDIM+1],*iu[MAXBIT+1];
+    static char initialized=0;
+    static unsigned long mdeg[MAXDIM+1]={0};
+    static unsigned long ip[MAXDIM+1]={0};
+    //static unsigned long iv[MAXDIM*MAXBIT+1]={ 0,1,1,1,1,1,1,3,1,3,3,1,1,5,7,7,3,3,5,15,11,5,15,13,9};
+    static unsigned long iv[MAXDIM*MAXBIT+1]={0};
+    /*static unsigned long mdeg[MAXDIM+1]={0,1,2,3,3,4,4};
+    static unsigned long ip[MAXDIM+1]={0,0,1,1,2,1,4};
+    //static unsigned long iv[MAXDIM*MAXBIT+1]={ 0,1,1,1,1,1,1,3,1,3,3,1,1,5,7,7,3,3,5,15,11,5,15,13,9};
+    static unsigned long iv[MAXDIM*MAXBIT+1]={ 0,1,1,1,1,1,1,0,1,3,3,1,1,0,0,7,3,3,5,0,0,0,0,13,9};*/
+
+    if(!initialized){
+        for(i=0;i<MAXDIM*MAXBIT+1;i++) iv[i]=0;
+        FILE *fp = fopen(INIT_FILE,"r");
+        if(!fp){
+            printf("Error in sobseq initialization : %s not found\n",INIT_FILE);
+            return;
+        }
+        fscanf(fp,"d       s       a       m_i     \n");
+        for(k=1;k<=MAXDIM;k++){
+            fscanf(fp,"%ld       %ld       %ld       ",&i,&mdeg[k],&ip[k]);
+            for(i=0;i<mdeg[k];i++){
+                fscanf(fp,"%ld ",&iv[k+i*MAXDIM]);
+            }
+            fscanf(fp,"\n");
+        }
+        initialized=1;
+    }
+
+    if(*n < 0){
+        for(k=1;k<=MAXDIM;k++) ix[k]=0;
+        in=0;
+        if (iv[1] != 1) return;
+        fac=1.0/(1L << MAXBIT);
+        for (j=1,k=0;j<=MAXBIT;j++,k+=MAXDIM) iu[j] = &iv[k];
+
+        for (k=1;k<=MAXDIM;k++) {
+            for (j=1;(unsigned)j<=mdeg[k];j++) iu[j][k] <<= (MAXBIT-j);
+            for (j=mdeg[k]+1;j<=MAXBIT;j++) {
+                ipp=ip[k];
+                i=iu[j-mdeg[k]][k];
+                i ^= (i >> mdeg[k]);
+                for (l=mdeg[k]-1;l>=1;l--) {
+                    if (ipp & 1) i ^= iu[j-l][k];
+                    ipp >>= 1;
+                }
+                iu[j][k]=i;
+            }
+        }
+    } else {
+        im=in++;
+        for (j=1;j<=MAXBIT;j++) {
+            if (!(im & 1)) break;
+            im >>= 1;
+        }
+        if (j > MAXBIT) FATAL("MAXBIT too small in sobseq",0,0,0);
+        im=(j-1)*MAXDIM;
+        for (k=1;k<=intMin(*n,MAXDIM);k++) {
+            ix[k] ^= iv[im+k];
+            x[k]=ix[k]*fac;
+        }
+    }
+}
+
+/*----------------------------------------------------------------------------*/
+/* normal quantile function */
+#define CENTRAL_RANGE 0.7
+double erfinv( double y)
+{
+        double x,z,num,dem; /*working variables */
+        /* coefficients in rational expansion */
+        double a[4]={ 0.886226899, -1.645349621,  0.914624893, -0.140543331};
+        double b[4]={-2.118377725,  1.442710462, -0.329097515,  0.012229801};
+        double c[4]={-1.970840454, -1.624906493,  3.429567803,  1.641345311};
+        double d[2]={ 3.543889200,  1.637067800};
+        if(fabs(y) > 1.0) return (atof("NaN"));  /* This needs IEEE constant*/
+        if(fabs(y) == 1.0) return((copysign(1.0,y))*DBL_MAX);
+        if( fabs(y) <= CENTRAL_RANGE )
+        {
+                z = y*y;
+                num = (((a[3]*z + a[2])*z + a[1])*z + a[0]);
+                dem = ((((b[3]*z + b[2])*z + b[1])*z +b[0])*z + 1.0);
+                x = y*num/dem;
+        }
+        else if( (fabs(y) > CENTRAL_RANGE) && (fabs(y) < 1.0) )
+        {
+                z = sqrt(-log((1.0-fabs(y))/2.0));
+                num = ((c[3]*z + c[2])*z + c[1])*z + c[0];
+                dem = (d[1]*z + d[0])*z + 1.0;
+                x = (copysign(1.0,y))*num/dem;
+        }
+        /* Two steps of Newton-Raphson correction */
+        x = x - (erf(x) - y)/( (2.0/sqrt(M_PI))*exp(-x*x));
+        x = x - (erf(x) - y)/( (2.0/sqrt(M_PI))*exp(-x*x));
+
+        return(x);
+}
+/* Function to compute ith quantile of an ensemble of N normal
+deviates.  Uses inverse erf function erfinv.  Returns the
+ith quantile of N where we start counting from 1.
+Author:  Gary L. Pavlis, Indiana University
+Written:  February 1996
+*/
+double normal_quantile(double fraction)
+{
+        return( sqrt(2)*erfinv(2.0*(fraction-0.5)) );
+}
 
 

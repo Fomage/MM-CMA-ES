@@ -87,6 +87,7 @@ typedef struct
 
   /* internal evolution strategy parameters */
   short flgNoRandom;   /* experimental */
+  char sobol;          /* whether to use sobol's quasirandom sequence */
   int lambda;          /* -> mu, <- N */
   int mu;              /* -> weights, (lambda) */
   double mucov, mueff; /* <- weights */
