@@ -247,10 +247,14 @@ static int mm_cmaes_findFreeVillageIndex(mm_cmaes_t* t);
 static void mm_cmaes_allowSplit(mm_cmaes_t *t, char b);
 static char mm_cmaes_checkFusion(mm_cmaes_t *t, int i, int j);
 static void mm_cmaes_mergeVillages(mm_cmaes_t *t, int i, int j);
+static void mm_cmaes_doPoison(mm_cmaes_t *t);
 static void sobseq(int *n, float x[]);
 static double normal_quantile(double fraction);
+static double douabs(double a){return a>=0?a:-a;}
+static void mm_cmaes_insert_sleeping_village(mm_cmaes_t *t,int v);
 
 static const char * c_cmaes_version = "3.20.01";
+static int village_ids = 0;
 
 /* --------------------------------------------------------- */
 /* --------------- Functions: mm_cmaes_t ------------------- */
@@ -276,7 +280,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
     if (nb < 0)
       nb = max_villages;
   } else {
-    printf("mm_cmaes_init(): could not open %s to read villages number\n", input_parameter_filename);
+    //printf("mm_cmaes_init(): could not open %s to read villages number\n", input_parameter_filename);
     nb = max_villages;
   }
 
@@ -288,9 +292,11 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->villages = (cmaes_t**) new_void(t->max_villages,sizeof(cmaes_t*));
   t->pop = (double*const**) new_void(t->max_villages,sizeof(double const*));
 
+  t->dimension = dimension;
+  t->maxevals=-1;
   t->countevals=0;
   t->fbestever=0;
-  t->xbestever=NULL;
+  t->xbestever=new_double(dimension);
   t->nbSplits=0;
   t->nbMerges=0;
 
@@ -307,6 +313,7 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->tooYoungToMerge = tooYoungToMerge;
   t->fusionThreshold = fusionThreshold;
   t->fusionFactor = fusionFactor;
+  t->fusionSizeLimit = sqrt(10);
   /*supplement defaults */
   if(t->recoveryTimeAfterSplit < 0)
     t->recoveryTimeAfterSplit = 10;
@@ -320,6 +327,23 @@ void mm_cmaes_init(mm_cmaes_t* t, int max_villages,
   t->stahp=0;
   t->allowSplit = (t->max_villages>t->nb_villages);
 
+  int j;
+  t->poison_threshold = 1e5;
+  t->poison_buffer_size = t->maxevals>=0?t->max_villages * (t->maxevals/t->villages[0]->sp.lambda +1):10000*t->dimension;
+  t->poison_current_size = 0;
+  t->poison_mean = (double**)malloc(t->poison_buffer_size*sizeof(double*));
+  for(i=0;i<t->poison_buffer_size;i++){
+    t->poison_mean[i] = new_double(dimension);}
+  t->poison_C = (double***)malloc(t->poison_buffer_size*sizeof(double**));
+  for(i=0;i<t->poison_buffer_size;i++){
+    t->poison_C[i] = (double**)malloc(dimension*sizeof(double*));
+    for(j=0;j<dimension;j++)
+      t->poison_C[i][j] = new_double(dimension);
+  }
+  t->poison_sigma = new_double(t->poison_buffer_size);
+  t->poison_fbestever = new_double(t->poison_buffer_size);
+  t->poison_id = (int*)malloc(t->poison_buffer_size*sizeof(int));
+  t->sleeping_villages = NULL;
   //init t->xbestever
 }
 
@@ -349,8 +373,14 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
         t->stahp=0;
 
         t->pop[ivillage] = cmaes_SamplePopulation(evo);
-        for (i = 0; i < cmaes_Get(evo, "popsize"); ++i)
+        for (i = 0; i < cmaes_Get(evo, "popsize"); ++i){
           evo->publicFitness[i] = (*pFun)(t->pop[ivillage][i]);
+          if(evo->publicFitness[i] < t->fbestever){
+            t->fbestever = evo->publicFitness[i];
+            for(j=0;j<t->dimension;j++) t->xbestever[j] = t->pop[ivillage][i][j];
+          }
+        }
+        t->countevals+=cmaes_Get(evo, "popsize");
 
         /* prevent newborn villages from spawning any more */
         if(evo->gen <= t->recoveryTimeAfterSplit){
@@ -389,7 +419,6 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
         fflush(stdout);
 
         if((stop = cmaes_TestForTermination(evo)) && (!splitOccured)){/* termination conditions are invalid right after a split*/
-          t->countevals+=evo->countevals;
 
           /* talk ? */
           if(talkative){
@@ -463,6 +492,13 @@ double* mm_cmaes_run(mm_cmaes_t* t, double(*pFun)(double const *), char talkativ
     }
   }
 
+  /* manage poison */
+  mm_cmaes_doPoison(t);
+
+  /* check maxevals */
+  if((t->maxevals>=0)&&(t->countevals > t->maxevals))
+    t->stahp=1;
+
   free(buffer);
 
   return t->xbestever;
@@ -472,6 +508,13 @@ static char mm_cmaes_checkFusion(mm_cmaes_t *t, int i, int j)
 {
   if((i<t->max_villages) && (j<t->max_villages) && t->villages[i] && t->villages[j]
      && (t->villages[i]->gen > t->tooYoungToMerge) && (t->villages[j]->gen > t->tooYoungToMerge)){
+    if(douabs(t->villages[i]->maxEW) > douabs(t->villages[j]->maxEW)){
+        if(douabs(t->villages[i]->maxEW/t->villages[j]->maxEW) > t->fusionSizeLimit)
+            return 0;
+    }else{
+        if(douabs(t->villages[j]->maxEW/t->villages[i]->maxEW) > t->fusionSizeLimit)
+            return 0;
+    }
     double Sd1,Sd2,dij,temp;
     int k;
     Sd1 = t->villages[i]->sigma * t->villages[i]->sigma * t->villages[i]->maxEW;
@@ -544,12 +587,114 @@ void mm_cmaes_free_village(mm_cmaes_t* t, int i){
   }
 }
 
+void mm_cmaes_doPoison(mm_cmaes_t* t){
+  int i,j,k,l;
+  double xdiff,cdiff,sigdiff;
+
+  /* update toxicity levels */
+  for(i=0;i<t->max_villages;i++){
+    if(t->villages[i]){
+      for(j=0;j<t->poison_current_size;j++){
+        if((t->poison_id[j] != t->villages[i]->village_id)&&(t->poison_fbestever[j] < t->villages[i]->rgxbestever[t->dimension])){
+          xdiff=0;
+          cdiff=0;
+          for(k=0;k<t->dimension;k++){
+            xdiff+=(t->villages[i]->rgxmean[k] - t->poison_mean[j][k])*(t->villages[i]->rgxmean[k] - t->poison_mean[j][k]);
+            for(l=0;l<t->dimension;l++){
+              cdiff+=(t->villages[i]->C[k][l] - t->poison_C[j][k][l])*(t->villages[i]->C[k][l] - t->poison_C[j][k][l]);
+            }
+          }
+          sigdiff=douabs(t->poison_sigma[j]-t->villages[i]->sigma);
+          t->villages[i]->toxicity_level+=1/(xdiff*cdiff*sigdiff);
+        }
+      }
+      if(t->villages[i]->toxicity_level > t->poison_threshold){
+        //mm_cmaes_free_village(t,i);
+        mm_cmaes_insert_sleeping_village(t,i);
+      }
+    }
+  }
+
+  /* deposit poison */
+  for(i=0;i<t->max_villages;i++){
+    if(t->villages[i]){
+      for(k=0;k<t->dimension;k++){
+        t->poison_mean[t->poison_current_size][k] = t->villages[i]->rgxmean[k];
+        for(l=0;l<t->dimension;l++){
+          t->poison_C[t->poison_current_size][k][l] = t->villages[i]->C[k][l];
+        }
+      }
+      t->poison_sigma[t->poison_current_size] = t->villages[i]->sigma;
+      t->poison_fbestever[t->poison_current_size] = t->villages[i]->rgxbestever[t->dimension];
+      t->poison_id[t->poison_current_size] = t->villages[i]->village_id;
+      t->poison_current_size++;
+    }
+  }
+
+  /* increase the poison_threshold if all villages sleep */
+  if(t->nb_villages==0){
+    t->poison_threshold*=2;
+    node_t* temp;
+    while((t->sleeping_villages)&&(t->nb_villages<t->max_villages)){
+      temp = t->sleeping_villages->next;
+      t->villages[mm_cmaes_findFreeVillageIndex(t)] = t->sleeping_villages->v;
+      t->nb_villages++;
+      free(t->sleeping_villages);
+      t->sleeping_villages = temp;
+    }
+  }
+}
+
+void mm_cmaes_insert_sleeping_village(mm_cmaes_t *t, int v){
+  if(!t->villages[v])
+    return;
+  if(t->sleeping_villages == NULL){
+    t->sleeping_villages = (node_t*)malloc(sizeof(node_t));
+    t->sleeping_villages->v = t->villages[v];
+    t->sleeping_villages->next = NULL;
+    t->villages[v] = NULL;
+    t->nb_villages--;
+    mm_cmaes_allowSplit(t,1);
+  }else{
+    node_t *n = t->sleeping_villages;
+    while((n->next!=NULL) && (n->next->v->rgxbestever[t->dimension] < t->villages[v]->rgxbestever[t->dimension])){
+      node_t *temp=n->next->next;
+      n->next = (node_t*)malloc(sizeof(node_t));
+      n->next->v = t->villages[v];
+      n->next->next = temp;
+      t->villages[v] = NULL;
+      t->nb_villages--;
+      mm_cmaes_allowSplit(t,1);
+    }
+  }
+}
+
 void mm_cmaes_exit(mm_cmaes_t* t)
 {
-  int i;
+  int i,j;
   for(i=0;i<t->max_villages;i++)
     mm_cmaes_free_village(t,i);
   free( t->xbestever);
+
+  for(i=0;i<t->poison_buffer_size;i++){
+    free(t->poison_mean[i]);
+    for(j=0;j<t->dimension;j++)
+      free(t->poison_C[i][j]);
+    free(t->poison_C[i]);
+  }
+  free(t->poison_mean);
+  free(t->poison_C);
+  free(t->poison_sigma);
+  free(t->poison_fbestever);
+  free(t->poison_id);
+
+  node_t *temp;
+  while(t->sleeping_villages){
+    temp = t->sleeping_villages->next;
+    free(t->sleeping_villages->v);
+    free(t->sleeping_villages);
+    t->sleeping_villages = temp;
+  }
 }
 
 /* --------------------------------------------------------- */
@@ -728,6 +873,8 @@ cmaes_init_final(cmaes_t *t /* "this" */)
 
   t->other = NULL;
   t->splitGen = 0;
+  t->village_id = village_ids;village_ids++;
+  t->toxicity_level = 0;
 
   return (t->publicFitness);
 
@@ -857,13 +1004,18 @@ void cmaes_clone(cmaes_t* source, cmaes_t* t)
 
   t->other = NULL;
   t->shouldSplit = 0;
+  t->village_id = village_ids;village_ids++;
+  t->toxicity_level = source->toxicity_level;
 }
 
 void cmaes_readpara_clone(cmaes_readpara_t* source, cmaes_readpara_t* t)
 {
   int j, N;
   t->filename = (char*) new_void(99,sizeof(char));
-  strcpy(t->filename, source->filename);
+  if(source->filename)
+    strcpy(t->filename, source->filename);
+  else
+    t->filename=NULL;
 
   //for check only
   t->rgsformat = NULL;
@@ -1400,7 +1552,7 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
   if (t->rgFuncValue[t->index[0]] ==
       t->rgFuncValue[t->index[(int)t->sp.lambda/2]]) {
     t->sigma *= exp(0.2+t->sp.cs/t->sp.damps);
-    printf("WARNING sigma increased\n");
+    //printf("WARNING sigma increased\n");
     ERRORMESSAGE("Warning: sigma increased due to equal function values\n",
                  "   Reconsider the formulation of the objective function",0,0);
   }
@@ -1466,10 +1618,10 @@ cmaes_UpdateDistribution( cmaes_t *t, const double *rgFunVal)
         initialCentroids[t->causeDivision[t->index[k]]-1]=t->index[k];
     }
     /* clustering */
-    free(t->clusters);
+    /*free(t->clusters);
     t->clusters=kmeans(t->rgrgx,t->sp.lambda,t->sp.N,2,
                        Sd*Sd*.1,initialCentroids,
-                       t->sp.weights,NULL);
+                       t->sp.weights,NULL);*/
 
     t->other = (cmaes_t*) new_void(1,sizeof(cmaes_t));
     cmaes_clone(t,t->other);

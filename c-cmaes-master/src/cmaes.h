@@ -184,19 +184,29 @@ struct cmaes_type
 
   struct cmaes_type* other;/* used in case of split */
   int splitGen;
+  int village_id;
+  double toxicity_level;
 };
 typedef struct cmaes_type cmaes_t;
 
+/* a linked list type for villages management */
+typedef struct node{
+    cmaes_t *v;
+    struct node *next;
+} node_t;
 
 typedef struct
 /* the MM-CMA-ES object, managing the different cmaes instances */
 {
   /* parameters */
+  int dimension;
   int max_villages;
   int recoveryTimeAfterSplit;
   int tooYoungToMerge;
   double fusionThreshold;
   double fusionFactor;
+  double fusionSizeLimit;
+  int maxevals;
 
   /* measures */
   int countevals;
@@ -213,6 +223,19 @@ typedef struct
 
   char stahp;
   char allowSplit;
+
+  /*poison*/
+  double poison_threshold;
+
+  int poison_buffer_size;
+  int poison_current_size;
+  double **poison_mean;
+  double ***poison_C;
+  double *poison_sigma;
+  double *poison_fbestever;
+  int *poison_id;
+
+  node_t* sleeping_villages;
 } mm_cmaes_t;
 
 #endif
